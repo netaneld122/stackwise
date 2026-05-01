@@ -235,6 +235,7 @@ canvas {
   flex-direction: column;
   gap: 5px;
   overflow: auto;
+  padding: 1px 2px 8px 0;
 }
 
 .moduleRow {
