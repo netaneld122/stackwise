@@ -241,6 +241,7 @@ canvas {
   border: 1px solid #e1e7ef;
   border-radius: 8px;
   background: #fbfcfe;
+  cursor: pointer;
   font-size: 12px;
   transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
 }
@@ -448,6 +449,14 @@ dd {
   line-height: 1.55;
 }
 
+.codeBlock[role="button"] {
+  cursor: zoom-in;
+}
+
+.codeBlock[role="button"]:hover {
+  border-color: rgba(20, 184, 166, 0.55);
+}
+
 .codeTitle {
   display: flex;
   justify-content: space-between;
@@ -539,6 +548,99 @@ body.resizing * {
   user-select: none;
 }
 
+.codeModal {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+}
+
+.codeModalBackdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.52);
+  backdrop-filter: blur(6px);
+}
+
+.codeModalPanel {
+  position: relative;
+  display: grid;
+  width: min(1180px, 96vw);
+  height: min(820px, 90vh);
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 26px 80px rgba(15, 23, 42, 0.32);
+}
+
+.codeModal.fullscreen {
+  padding: 0;
+}
+
+.codeModal.fullscreen .codeModalPanel {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+}
+
+.codeModalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 14px;
+}
+
+.codeModalTitle {
+  min-width: 0;
+}
+
+.codeModalTitle strong,
+.codeModalTitle span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codeModalTitle span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.codeModalActions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.codeModalBody {
+  min-height: 0;
+  overflow: auto;
+  background: #10151f;
+}
+
+.codeModalBody .codeBlock {
+  min-height: 100%;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+}
+
+.codeModalBody .codeLine {
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+
+.codeModalBody .asmLine {
+  grid-template-columns: 118px 150px minmax(0, 1fr);
+}
+
 @media (max-width: 1080px) {
   .app {
     grid-template-columns: 1fr;
@@ -595,5 +697,14 @@ body.resizing * {
   .searchBox,
   select {
     width: 100%;
+  }
+
+  .codeModal {
+    padding: 8px;
+  }
+
+  .codeModalHeader {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

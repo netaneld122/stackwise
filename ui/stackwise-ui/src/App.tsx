@@ -51,8 +51,16 @@ function ReportView({ report }: { report: StackwiseReport }) {
   const { query, setQuery, metric, setMetric, confidence, setConfidence, selectedSymbol } =
     useStackwiseStore();
   const moduleTree = useMemo(() => buildModuleTree(report), [report]);
-  const [includedModules, setIncludedModules] = useState<Set<string> | null>(null);
+  const [includedModules, setIncludedModules] = useState<Set<string> | null>(() =>
+    defaultIncludedModules(report, moduleTree),
+  );
   const [expandedModules, setExpandedModules] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setIncludedModules(defaultIncludedModules(report, moduleTree));
+    setExpandedModules(new Set());
+  }, [report, moduleTree]);
+
   const includedSymbolIds = useMemo(
     () => symbolIdsForModules(moduleTree, includedModules),
     [moduleTree, includedModules],
@@ -240,13 +248,25 @@ function ModuleList({
             <div
               className={`moduleRow${selection === "checked" ? " active" : ""}${selection === "mixed" ? " mixed" : ""}`}
               key={node.key}
+              role="button"
+              tabIndex={0}
+              onClick={() => toggleSelected(node)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  toggleSelected(node);
+                }
+              }}
             >
               <div className="moduleLine" style={{ "--depth": node.depth } as CSSProperties}>
                 <button
                   type="button"
                   className={`treeToggle${hasChildren ? "" : " placeholder"}`}
                   aria-label={`${expandedModules.has(node.key) ? "Collapse" : "Expand"} ${node.path}`}
-                  onClick={() => toggleExpanded(node)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    toggleExpanded(node);
+                  }}
                   disabled={!hasChildren}
                 >
                   {hasChildren ? (expandedModules.has(node.key) ? "v" : ">") : ">"}
@@ -257,6 +277,7 @@ function ModuleList({
                   }}
                   type="checkbox"
                   checked={selection === "checked"}
+                  onClick={(event) => event.stopPropagation()}
                   onChange={() => toggleSelected(node)}
                 />
                 <span className="moduleTitle" title={node.path}>
@@ -354,6 +375,12 @@ function Details({ symbol }: { symbol: SymbolReport | null }) {
 }
 
 function CodePanel({ context, loading }: { context: SymbolContext | null; loading: boolean }) {
+  const [popout, setPopout] = useState<"source" | "disassembly" | null>(null);
+
+  useEffect(() => {
+    setPopout(null);
+  }, [context]);
+
   if (loading) return <div className="codePanel"><p className="contextMessage">Loading source and disassembly...</p></div>;
   if (!context) return <div className="codePanel"><p className="contextMessage">Select a symbol to load source and disassembly.</p></div>;
 
@@ -368,7 +395,19 @@ function CodePanel({ context, loading }: { context: SymbolContext | null; loadin
         ) : <span className="muted">No source link</span>}
       </div>
       {context.source ? (
-        <div className="codeBlock">
+        <div
+          className="codeBlock"
+          role="button"
+          tabIndex={0}
+          title="Open implementation in a larger view"
+          onClick={() => setPopout("source")}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              setPopout("source");
+            }
+          }}
+        >
           <div className="codeTitle"><span>Implementation</span><span>{context.source.language}</span></div>
           {context.source.lines.map((line) => (
             <div className={`codeLine${line.highlight ? " highlight" : ""}`} key={line.number}>
@@ -379,7 +418,19 @@ function CodePanel({ context, loading }: { context: SymbolContext | null; loadin
         </div>
       ) : null}
       {context.disassembly ? (
-        <div className="codeBlock">
+        <div
+          className="codeBlock"
+          role="button"
+          tabIndex={0}
+          title="Open disassembly in a larger view"
+          onClick={() => setPopout("disassembly")}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              setPopout("disassembly");
+            }
+          }}
+        >
           <div className="codeTitle"><span>Disassembly</span><span>{context.disassembly.architecture}</span></div>
           {context.disassembly.instructions.map((line) => (
             <div className="codeLine asmLine" key={`${line.address}-${line.bytes}`}>
@@ -391,6 +442,76 @@ function CodePanel({ context, loading }: { context: SymbolContext | null; loadin
         </div>
       ) : null}
       {context.messages.map((message) => <p className="contextMessage" key={message}>{message}</p>)}
+      {popout ? <CodeModal context={context} kind={popout} onClose={() => setPopout(null)} /> : null}
+    </div>
+  );
+}
+
+function CodeModal({
+  context,
+  kind,
+  onClose,
+}: {
+  context: SymbolContext;
+  kind: "source" | "disassembly";
+  onClose: () => void;
+}) {
+  const [fullscreen, setFullscreen] = useState(false);
+  const title = kind === "source" ? "Implementation" : "Disassembly";
+  const subtitle = kind === "source"
+    ? context.source ? `${context.source.file}:${context.source.line ?? ""}` : "No source link"
+    : context.disassembly?.architecture ?? "No disassembly";
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className={`codeModal${fullscreen ? " fullscreen" : ""}`} aria-hidden="false">
+      <div className="codeModalBackdrop" onClick={onClose} />
+      <div className="codeModalPanel" role="dialog" aria-modal="true" aria-labelledby="codeModalTitle">
+        <div className="codeModalHeader">
+          <div className="codeModalTitle">
+            <strong id="codeModalTitle">{title}</strong>
+            <span>{subtitle}</span>
+          </div>
+          <div className="codeModalActions">
+            <button type="button" onClick={() => setFullscreen((current) => !current)}>
+              {fullscreen ? "Windowed" : "Full screen"}
+            </button>
+            <button type="button" onClick={onClose}>Close</button>
+          </div>
+        </div>
+        <div className="codeModalBody">
+          {kind === "source" && context.source ? (
+            <div className="codeBlock modalCodeBlock">
+              <div className="codeTitle"><span>Implementation</span><span>{context.source.language}</span></div>
+              {context.source.lines.map((line) => (
+                <div className={`codeLine${line.highlight ? " highlight" : ""}`} key={line.number}>
+                  <span className="lineNo">{line.number}</span>
+                  <span>{line.text}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {kind === "disassembly" && context.disassembly ? (
+            <div className="codeBlock modalCodeBlock">
+              <div className="codeTitle"><span>Disassembly</span><span>{context.disassembly.architecture}</span></div>
+              {context.disassembly.instructions.map((line) => (
+                <div className="codeLine asmLine" key={`${line.address}-${line.bytes}`}>
+                  <span className="address">{line.address}</span>
+                  <span className="bytes">{line.bytes}</span>
+                  <span>{line.text}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }
@@ -526,6 +647,13 @@ function buildModuleTree(report: StackwiseReport): ModuleTree {
 
   finalizeModuleNode(root, report, root.allKeys);
   return root;
+}
+
+function defaultIncludedModules(report: StackwiseReport, tree: ModuleTree): Set<string> | null {
+  const primary = primaryCrateName(report);
+  if (!primary) return null;
+  const node = tree.byKey.get(primary);
+  return node ? new Set(moduleKeys(node)) : null;
 }
 
 function createModuleNode(name: string, path: string, depth: number): ModuleNode {

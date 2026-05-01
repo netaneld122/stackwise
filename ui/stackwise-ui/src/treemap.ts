@@ -32,9 +32,12 @@ export function buildTreemap(
 
     const groupName = treemapGroupName(symbol, report);
     const group = groups.get(groupName) ?? { name: groupName, children: [], priority: groupPriority(symbol, report) };
+    group.value = (group.value ?? 0) + value;
     group.children?.push({ name: symbol.demangled, symbol, value });
     groups.set(groupName, group);
   }
+
+  applyPrimaryGroupFloor([...groups.values()]);
 
   const rootNode: TreeNode = {
     name: "root",
@@ -63,4 +66,25 @@ export function buildTreemap(
       width: node.x1 - node.x0,
       height: node.y1 - node.y0,
     }));
+}
+
+function applyPrimaryGroupFloor(groups: TreeNode[]) {
+  const total = groups.reduce((sum, group) => sum + (group.value ?? 0), 0);
+  if (total <= 0) {
+    for (const group of groups) group.value = undefined;
+    return;
+  }
+  const primaryGroups = groups.filter((group) => group.priority === 0);
+
+  const floor = total * (primaryGroups.length > 6 ? 0.025 : 0.08);
+  for (const group of primaryGroups) {
+    if ((group.value ?? 0) < floor && group.children?.length) {
+      const scale = floor / Math.max(group.value ?? 0, 1);
+      group.children = group.children.map((child) => ({
+        ...child,
+        value: (child.value ?? 0) * scale,
+      }));
+    }
+  }
+  for (const group of groups) group.value = undefined;
 }

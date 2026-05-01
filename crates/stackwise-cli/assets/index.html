@@ -293,6 +293,7 @@
         border-radius: 8px;
         background: #fbfcfe;
         color: inherit;
+        cursor: pointer;
         transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
       }
 
@@ -444,6 +445,14 @@
         font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
         font-size: 12px;
         line-height: 1.55;
+      }
+
+      .codeBlock[data-popout] {
+        cursor: zoom-in;
+      }
+
+      .codeBlock[data-popout]:hover {
+        border-color: rgba(20, 184, 166, 0.55);
       }
 
       .codeTitle {
@@ -625,6 +634,103 @@
         user-select: none;
       }
 
+      .codeModal {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        display: grid;
+        place-items: center;
+        padding: 28px;
+      }
+
+      .codeModal.hidden {
+        display: none;
+      }
+
+      .codeModalBackdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.52);
+        backdrop-filter: blur(6px);
+      }
+
+      .codeModalPanel {
+        position: relative;
+        display: grid;
+        width: min(1180px, 96vw);
+        height: min(820px, 90vh);
+        grid-template-rows: auto minmax(0, 1fr);
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, 0.32);
+        border-radius: 8px;
+        background: #ffffff;
+        box-shadow: 0 26px 80px rgba(15, 23, 42, 0.32);
+      }
+
+      .codeModal.fullscreen {
+        padding: 0;
+      }
+
+      .codeModal.fullscreen .codeModalPanel {
+        width: 100vw;
+        height: 100vh;
+        border-radius: 0;
+      }
+
+      .codeModalHeader {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        border-bottom: 1px solid var(--line);
+        padding: 12px 14px;
+      }
+
+      .codeModalTitle {
+        min-width: 0;
+      }
+
+      .codeModalTitle strong,
+      .codeModalTitle span {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .codeModalTitle span {
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .codeModalActions {
+        display: flex;
+        flex: 0 0 auto;
+        gap: 8px;
+      }
+
+      .codeModalBody {
+        min-height: 0;
+        overflow: auto;
+        background: #10151f;
+      }
+
+      .codeModalBody .codeBlock {
+        min-height: 100%;
+        max-height: none;
+        border: 0;
+        border-radius: 0;
+      }
+
+      .codeModalBody .codeLine {
+        grid-template-columns: 64px minmax(0, 1fr);
+      }
+
+      .codeModalBody .asmLine {
+        grid-template-columns: 118px 150px minmax(0, 1fr);
+      }
+
       .hidden { display: none; }
 
       @media (max-width: 1080px) {
@@ -691,6 +797,15 @@
         .summaryChips {
           flex-wrap: wrap;
         }
+
+        .codeModal {
+          padding: 8px;
+        }
+
+        .codeModalHeader {
+          align-items: flex-start;
+          flex-direction: column;
+        }
       }
     </style>
   </head>
@@ -754,6 +869,23 @@
       <footer id="status">Loading...</footer>
     </div>
 
+    <div id="codeModal" class="codeModal hidden" aria-hidden="true">
+      <div class="codeModalBackdrop" data-close-code-modal></div>
+      <div class="codeModalPanel" role="dialog" aria-modal="true" aria-labelledby="codeModalTitle">
+        <div class="codeModalHeader">
+          <div class="codeModalTitle">
+            <strong id="codeModalTitle">Code view</strong>
+            <span id="codeModalSubtitle"></span>
+          </div>
+          <div class="codeModalActions">
+            <button id="codeModalFullscreen" type="button">Full screen</button>
+            <button id="codeModalClose" type="button">Close</button>
+          </div>
+        </div>
+        <div id="codeModalBody" class="codeModalBody"></div>
+      </div>
+    </div>
+
     <script>
       const state = {
         report: null,
@@ -768,6 +900,7 @@
         context: null,
         contextLoading: false,
         contextSymbolId: null,
+        codeModalKind: null,
       };
       const app = document.querySelector(".app");
       const canvas = document.getElementById("treemap");
@@ -785,10 +918,17 @@
       const tooltip = document.getElementById("tooltip");
       const leftResizer = document.getElementById("leftResizer");
       const rightResizer = document.getElementById("rightResizer");
+      const codeModal = document.getElementById("codeModal");
+      const codeModalTitle = document.getElementById("codeModalTitle");
+      const codeModalSubtitle = document.getElementById("codeModalSubtitle");
+      const codeModalBody = document.getElementById("codeModalBody");
+      const codeModalClose = document.getElementById("codeModalClose");
+      const codeModalFullscreen = document.getElementById("codeModalFullscreen");
 
       fetch("/report.json").then(r => r.json()).then(report => {
         state.report = report;
         state.moduleTree = buildModuleTree(report);
+        state.includedModules = defaultIncludedModules(report, state.moduleTree);
         renderAll();
       }).catch(error => {
         empty.textContent = `Failed to load report: ${error}`;
@@ -809,6 +949,15 @@
       window.addEventListener("resize", draw);
       initResizer(leftResizer, "left");
       initResizer(rightResizer, "right");
+      codeModalClose.addEventListener("click", closeCodeModal);
+      codeModal.querySelector("[data-close-code-modal]").addEventListener("click", closeCodeModal);
+      codeModalFullscreen.addEventListener("click", () => {
+        codeModal.classList.toggle("fullscreen");
+        codeModalFullscreen.textContent = codeModal.classList.contains("fullscreen") ? "Windowed" : "Full screen";
+      });
+      document.addEventListener("keydown", event => {
+        if (event.key === "Escape" && !codeModal.classList.contains("hidden")) closeCodeModal();
+      });
 
       canvas.addEventListener("click", event => {
         const rect = pickRect(event);
@@ -905,13 +1054,19 @@
             </div>`;
           const checkbox = el.querySelector("input");
           checkbox.indeterminate = selection === "mixed";
-          checkbox.addEventListener("change", () => {
+          el.addEventListener("click", () => {
+            toggleModule(node.key);
+            renderAll();
+          });
+          checkbox.addEventListener("click", event => {
+            event.stopPropagation();
             toggleModule(node.key);
             renderAll();
           });
           const toggle = el.querySelector(".treeToggle");
           if (hasChildren) {
-            toggle.addEventListener("click", () => {
+            toggle.addEventListener("click", event => {
+              event.stopPropagation();
               if (state.expandedModules.has(node.key)) {
                 state.expandedModules.delete(node.key);
               } else {
@@ -948,6 +1103,14 @@
         root.byKey = byKey;
         root.allKeys = allKeys;
         return root;
+      }
+
+      function defaultIncludedModules(report, tree) {
+        const primary = primaryCrateName(report);
+        if (!primary) return null;
+        const node = tree.byKey.get(primary);
+        if (!node) return null;
+        return new Set(moduleKeys(node));
       }
 
       function createModuleNode(name, path, depth) {
@@ -1133,6 +1296,7 @@
             </div>
           </div>
           ${renderSymbolContext(symbol)}`;
+        bindCodePopouts(symbol);
       }
 
       function loadSymbolContext() {
@@ -1166,8 +1330,8 @@
         if (!context) {
           return `<div class="codePanel"><div class="contextMessage">Select a symbol to load source and disassembly.</div></div>`;
         }
-        const source = renderSourceBlock(context.source);
-        const asm = renderDisassemblyBlock(context.disassembly);
+        const source = renderSourceBlock(context.source, false);
+        const asm = renderDisassemblyBlock(context.disassembly, false);
         const messages = (context.messages ?? []).map(message => `<div class="contextMessage">${escapeHtml(message)}</div>`).join("");
         return `
           <div class="codePanel">
@@ -1183,10 +1347,10 @@
           </div>`;
       }
 
-      function renderSourceBlock(source) {
+      function renderSourceBlock(source, modal) {
         if (!source) return "";
         return `
-          <div class="codeBlock">
+          <div class="codeBlock${modal ? " modalCodeBlock" : ""}" ${modal ? "" : 'data-popout="source" tabindex="0" title="Open implementation in a larger view"'}>
             <div class="codeTitle"><span>Implementation</span><span>${escapeHtml(source.language)}</span></div>
             ${source.lines.map(line => `
               <div class="codeLine${line.highlight ? " highlight" : ""}">
@@ -1196,10 +1360,10 @@
           </div>`;
       }
 
-      function renderDisassemblyBlock(disassembly) {
+      function renderDisassemblyBlock(disassembly, modal) {
         if (!disassembly) return "";
         return `
-          <div class="codeBlock">
+          <div class="codeBlock${modal ? " modalCodeBlock" : ""}" ${modal ? "" : 'data-popout="disassembly" tabindex="0" title="Open disassembly in a larger view"'}>
             <div class="codeTitle"><span>Disassembly</span><span>${escapeHtml(disassembly.architecture)} / ${escapeHtml(disassembly.syntax)}</span></div>
             ${disassembly.instructions.map(line => `
               <div class="codeLine asmLine">
@@ -1208,6 +1372,47 @@
                 <span>${highlightAsm(line.text)}</span>
               </div>`).join("")}
           </div>`;
+      }
+
+      function bindCodePopouts(symbol) {
+        details.querySelectorAll("[data-popout]").forEach(block => {
+          const kind = block.getAttribute("data-popout");
+          block.addEventListener("click", () => openCodeModal(kind, symbol));
+          block.addEventListener("keydown", event => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              openCodeModal(kind, symbol);
+            }
+          });
+        });
+      }
+
+      function openCodeModal(kind, symbol) {
+        const context = state.contextSymbolId === symbol.id ? state.context : null;
+        if (!context) return;
+        const isSource = kind === "source";
+        const title = isSource ? "Implementation" : "Disassembly";
+        const sourceLabel = context.source ? `${context.source.file}:${context.source.line ?? ""}` : symbol.demangled;
+        codeModalTitle.textContent = title;
+        codeModalSubtitle.textContent = isSource ? sourceLabel : symbol.demangled;
+        codeModalBody.innerHTML = isSource
+          ? renderSourceBlock(context.source, true)
+          : renderDisassemblyBlock(context.disassembly, true);
+        if (!codeModalBody.innerHTML.trim()) {
+          codeModalBody.innerHTML = `<div class="contextMessage">No ${escapeHtml(title.toLowerCase())} is available for this symbol.</div>`;
+        }
+        codeModal.classList.remove("hidden");
+        codeModal.setAttribute("aria-hidden", "false");
+        codeModalFullscreen.textContent = codeModal.classList.contains("fullscreen") ? "Windowed" : "Full screen";
+        codeModalClose.focus();
+      }
+
+      function closeCodeModal() {
+        codeModal.classList.add("hidden");
+        codeModal.classList.remove("fullscreen");
+        codeModal.setAttribute("aria-hidden", "true");
+        codeModalBody.innerHTML = "";
+        codeModalFullscreen.textContent = "Full screen";
       }
 
       function draw() {
@@ -1421,7 +1626,9 @@
           groups.set(key, group);
         }
 
-        const groupRects = squarify([...groups.values()], x, y, w, h, 260);
+        const orderedGroups = [...groups.values()];
+        applyPrimaryGroupFloor(orderedGroups);
+        const groupRects = squarify(orderedGroups, x, y, w, h, 260);
         const symbolRects = [];
         for (const groupRect of groupRects) {
           const pad = Math.min(7, Math.max(2, Math.min(groupRect.w, groupRect.h) * 0.015));
@@ -1444,6 +1651,22 @@
         };
       }
 
+      function applyPrimaryGroupFloor(groups) {
+        const total = groups.reduce((sum, group) => sum + group.value, 0);
+        if (!total) return;
+        const primaryGroups = groups.filter(group => group.priority === 0);
+        if (!primaryGroups.length) return;
+        const floor = total * (primaryGroups.length > 6 ? 0.025 : 0.08);
+        for (const group of primaryGroups) {
+          group.value = Math.max(group.value, floor);
+          const symbolTotal = group.symbols.reduce((sum, item) => sum + item.value, 0);
+          if (symbolTotal > 0 && symbolTotal < floor) {
+            const scale = floor / symbolTotal;
+            group.symbols = group.symbols.map(item => ({ ...item, value: item.value * scale }));
+          }
+        }
+      }
+
       function drawGroupBoundaries(ratio) {
         for (const rect of state.groupRects) {
           if (rect.w <= 0 || rect.h <= 0) continue;
@@ -1452,15 +1675,16 @@
           roundRect(ctx, rect.x, rect.y, rect.w, rect.h, Math.min(8 * ratio, rect.w / 6, rect.h / 6));
           ctx.stroke();
 
-          if (rect.w > 150 * ratio && rect.h > 56 * ratio) {
+          if (rect.w > 64 * ratio && rect.h > 42 * ratio) {
             const label = trimMiddle(rect.key, Math.floor(rect.w / (7 * ratio)));
             ctx.font = `600 ${12 * ratio}px system-ui`;
-            const labelWidth = ctx.measureText(label).width + 16 * ratio;
+            const labelWidth = Math.min(ctx.measureText(label).width + 16 * ratio, rect.w - 14 * ratio);
+            const labelX = rect.x + rect.w - labelWidth - 7 * ratio;
             ctx.fillStyle = "rgba(255, 255, 255, 0.82)";
-            roundRect(ctx, rect.x + 7 * ratio, rect.y + 7 * ratio, Math.min(labelWidth, rect.w - 14 * ratio), 24 * ratio, 6 * ratio);
+            roundRect(ctx, labelX, rect.y + 7 * ratio, labelWidth, 24 * ratio, 6 * ratio);
             ctx.fill();
             ctx.fillStyle = "rgba(16, 24, 40, 0.78)";
-            ctx.fillText(label, rect.x + 15 * ratio, rect.y + 23 * ratio);
+            ctx.fillText(label, labelX + 8 * ratio, rect.y + 23 * ratio);
           }
         }
       }
