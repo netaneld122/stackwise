@@ -21,6 +21,8 @@
         --amber: #d97706;
         --red: #dc2626;
         --violet: #6d5bd0;
+        --left-width: 320px;
+        --right-width: 520px;
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         background: var(--bg);
         color: var(--ink);
@@ -31,7 +33,7 @@
 
       .app {
         display: grid;
-        grid-template-columns: 320px minmax(440px, 1fr) 520px;
+        grid-template-columns: minmax(240px, var(--left-width)) 6px minmax(360px, 1fr) 6px minmax(360px, var(--right-width));
         grid-template-rows: 72px minmax(0, 1fr) 36px;
         gap: 10px;
         height: 100vh;
@@ -78,6 +80,10 @@
         min-height: 0;
         overflow: hidden;
       }
+
+      aside { grid-column: 1; }
+      main { grid-column: 3; }
+      section { grid-column: 5; }
 
       aside,
       section {
@@ -136,7 +142,7 @@
       input:focus,
       select:focus,
       button:focus-visible,
-      .row:focus-visible {
+      .treeRow:focus-within {
         border-color: var(--accent);
         box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14);
       }
@@ -258,42 +264,85 @@
         margin-bottom: 12px;
       }
 
-      .list {
+      .panelActions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 6px;
+      }
+
+      .panelActions button {
+        height: 30px;
+        padding: 0 9px;
+        font-size: 12px;
+      }
+
+      .moduleTree {
         display: flex;
         flex: 1;
         min-height: 0;
         flex-direction: column;
-        gap: 7px;
+        gap: 5px;
         overflow: auto;
         padding-right: 2px;
       }
 
-      .row {
+      .treeRow {
         width: 100%;
         border: 1px solid #e1e7ef;
         border-radius: 8px;
-        padding: 9px;
         background: #fbfcfe;
         color: inherit;
-        text-align: left;
-        transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+        transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
       }
 
-      .row input[type="checkbox"] {
+      .treeLine {
+        display: flex;
+        min-height: 38px;
+        min-width: 0;
+        align-items: center;
+        gap: 7px;
+        padding: 6px 8px 6px calc(8px + var(--depth) * 14px);
+      }
+
+      .treeToggle {
+        width: 22px;
+        height: 22px;
+        flex: 0 0 auto;
+        border-color: transparent;
+        background: transparent;
+        padding: 0;
+        color: #667085;
+      }
+
+      .treeToggle:hover:not(:disabled) {
+        background: #eef6f5;
+      }
+
+      .treeToggle.placeholder {
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      .treeRow input[type="checkbox"] {
         width: 16px;
         height: 16px;
         flex: 0 0 auto;
         accent-color: var(--accent);
       }
 
-      .row:hover,
-      .row.active {
+      .treeRow:hover,
+      .treeRow.active {
         border-color: rgba(15, 118, 110, 0.45);
         background: #ffffff;
-        transform: translateY(-1px);
       }
 
-      .row strong,
+      .treeRow.mixed {
+        border-color: rgba(217, 119, 6, 0.36);
+        background: #fffdf7;
+      }
+
+      .treeRow strong,
       .detailName {
         display: block;
         overflow: hidden;
@@ -301,14 +350,15 @@
         white-space: nowrap;
       }
 
-      .rowTitle {
+      .treeText {
         display: flex;
+        flex: 1;
         min-width: 0;
         align-items: center;
         gap: 8px;
       }
 
-      .rowTitle strong {
+      .treeText strong {
         min-width: 0;
       }
 
@@ -320,18 +370,16 @@
         box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.46);
       }
 
-      .rowMeta,
+      .treeMeta,
       .muted {
         color: var(--muted);
       }
 
-      .rowMeta {
-        display: flex;
-        justify-content: space-between;
-        gap: 10px;
-        margin-top: 4px;
+      .treeMeta {
+        flex: 0 0 auto;
         font-size: 12px;
         font-variant-numeric: tabular-nums;
+        white-space: nowrap;
       }
 
       .metric {
@@ -545,6 +593,38 @@
         margin-bottom: 4px;
       }
 
+      .resizer {
+        position: relative;
+        grid-row: 2;
+        min-height: 0;
+        cursor: col-resize;
+        touch-action: none;
+      }
+
+      .leftResizer { grid-column: 2; }
+      .rightResizer { grid-column: 4; }
+
+      .resizer::before {
+        content: "";
+        position: absolute;
+        inset: 8px 2px;
+        border-radius: 999px;
+        background: rgba(102, 112, 133, 0.22);
+        transition: background 0.12s ease, transform 0.12s ease;
+      }
+
+      .resizer:hover::before,
+      .resizer.dragging::before {
+        background: rgba(15, 118, 110, 0.55);
+        transform: scaleX(1.45);
+      }
+
+      body.resizing,
+      body.resizing * {
+        cursor: col-resize !important;
+        user-select: none;
+      }
+
       .hidden { display: none; }
 
       @media (max-width: 1080px) {
@@ -556,6 +636,16 @@
         header,
         footer {
           grid-column: 1;
+        }
+
+        aside,
+        main,
+        section {
+          grid-column: 1;
+        }
+
+        .resizer {
+          display: none;
         }
 
         header {
@@ -636,16 +726,23 @@
       <aside>
         <div class="panelHeader">
           <h2>Modules</h2>
-          <button id="clearGroup" type="button">Show all</button>
+          <div class="panelActions">
+            <button id="selectAllModules" type="button">Select all</button>
+            <button id="deselectAllModules" type="button">Deselect all</button>
+          </div>
         </div>
-        <div id="groups" class="list"></div>
+        <div id="groups" class="moduleTree"></div>
       </aside>
+
+      <div id="leftResizer" class="resizer leftResizer" role="separator" aria-label="Resize modules panel"></div>
 
       <main>
         <canvas id="treemap"></canvas>
         <div id="empty" class="empty">Loading report...</div>
         <div id="tooltip" class="tooltip hidden"></div>
       </main>
+
+      <div id="rightResizer" class="resizer rightResizer" role="separator" aria-label="Resize symbols panel"></div>
 
       <section>
         <div class="panelHeader">
@@ -665,11 +762,14 @@
         groupRects: [],
         selected: null,
         hovered: null,
-        includedGroups: null,
+        moduleTree: null,
+        expandedModules: new Set(),
+        includedModules: null,
         context: null,
         contextLoading: false,
         contextSymbolId: null,
       };
+      const app = document.querySelector(".app");
       const canvas = document.getElementById("treemap");
       const ctx = canvas.getContext("2d");
       const search = document.getElementById("search");
@@ -679,12 +779,16 @@
       const details = document.getElementById("details");
       const status = document.getElementById("status");
       const groups = document.getElementById("groups");
-      const clearGroup = document.getElementById("clearGroup");
+      const selectAllModules = document.getElementById("selectAllModules");
+      const deselectAllModules = document.getElementById("deselectAllModules");
       const summaryChips = document.getElementById("summaryChips");
       const tooltip = document.getElementById("tooltip");
+      const leftResizer = document.getElementById("leftResizer");
+      const rightResizer = document.getElementById("rightResizer");
 
       fetch("/report.json").then(r => r.json()).then(report => {
         state.report = report;
+        state.moduleTree = buildModuleTree(report);
         renderAll();
       }).catch(error => {
         empty.textContent = `Failed to load report: ${error}`;
@@ -694,11 +798,17 @@
       search.addEventListener("input", renderAll);
       metric.addEventListener("change", renderAll);
       confidence.addEventListener("change", renderAll);
-      clearGroup.addEventListener("click", () => {
-        state.includedGroups = null;
+      selectAllModules.addEventListener("click", () => {
+        state.includedModules = null;
+        renderAll();
+      });
+      deselectAllModules.addEventListener("click", () => {
+        state.includedModules = new Set();
         renderAll();
       });
       window.addEventListener("resize", draw);
+      initResizer(leftResizer, "left");
+      initResizer(rightResizer, "right");
 
       canvas.addEventListener("click", event => {
         const rect = pickRect(event);
@@ -747,7 +857,7 @@
           })
           .sort((left, right) => symbolRank(left) - symbolRank(right) || metricValue(right) - metricValue(left));
         renderSummary();
-        renderGroups();
+        renderModuleTree();
         renderDetails();
         draw();
         empty.textContent = state.filtered.length ? "" : "No symbols match the current filters.";
@@ -773,66 +883,227 @@
         }).join("");
       }
 
-      function renderGroups() {
+      function renderModuleTree() {
         groups.innerHTML = "";
-        const ordered = [...state.report.groups].sort((left, right) => {
-          const leftSymbol = state.report.symbols[left.symbol_ids[0]];
-          const rightSymbol = state.report.symbols[right.symbol_ids[0]];
-          const leftPriority = leftSymbol ? groupPriority(leftSymbol, state.report) : 3;
-          const rightPriority = rightSymbol ? groupPriority(rightSymbol, state.report) : 3;
-          const leftValue = left.own_frame_sum ?? left.worst_path_max ?? 0;
-          const rightValue = right.own_frame_sum ?? right.worst_path_max ?? 0;
-          return leftPriority - rightPriority || rightValue - leftValue || left.name.localeCompare(right.name);
-        });
+        const activeSymbolIds = includedSymbolIds();
+        const visible = visibleModuleNodes(state.moduleTree);
 
-        for (const group of ordered.slice(0, 120)) {
-          const el = document.createElement("label");
-          const firstSymbol = state.report.symbols[group.symbol_ids[0]];
-          const color = firstSymbol ? groupColor(firstSymbol, state.report) : "#94a3b8";
-          const checked = groupIncluded(group.id);
-          el.className = `row${checked ? " active" : ""}`;
+        for (const node of visible) {
+          const selection = moduleSelectionState(node, activeSymbolIds);
+          const el = document.createElement("div");
+          const hasChildren = node.children.length > 0;
+          el.className = `treeRow${selection === "checked" ? " active" : ""}${selection === "mixed" ? " mixed" : ""}`;
           el.innerHTML = `
-            <span class="rowTitle">
-              <input type="checkbox" ${checked ? "checked" : ""} data-group-id="${group.id}" />
-              <span class="swatch" style="background:${color}"></span>
-              <strong>${escapeHtml(group.name)}</strong>
-            </span>
-            <span class="rowMeta">
-              <span>${group.symbol_ids.length} symbols</span>
-              <span>${formatBytes(group.own_frame_sum ?? group.worst_path_max)}</span>
-            </span>`;
-          el.querySelector("input").addEventListener("change", () => {
-            toggleGroup(group.id);
+            <div class="treeLine" style="--depth:${node.depth}">
+              <button class="treeToggle${hasChildren ? "" : " placeholder"}" type="button" aria-label="${state.expandedModules.has(node.key) ? "Collapse" : "Expand"} ${escapeHtml(node.path)}" data-module-toggle="${escapeHtml(node.key)}">${hasChildren ? (state.expandedModules.has(node.key) ? "v" : ">") : ">"}</button>
+              <input type="checkbox" ${selection === "checked" ? "checked" : ""} data-module-key="${escapeHtml(node.key)}" />
+              <span class="treeText" title="${escapeHtml(node.path)}">
+                <span class="swatch" style="background:${node.color}"></span>
+                <strong>${escapeHtml(node.name)}</strong>
+              </span>
+              <span class="treeMeta">${formatNumber(node.symbolIds.size)} symbols</span>
+            </div>`;
+          const checkbox = el.querySelector("input");
+          checkbox.indeterminate = selection === "mixed";
+          checkbox.addEventListener("change", () => {
+            toggleModule(node.key);
             renderAll();
           });
+          const toggle = el.querySelector(".treeToggle");
+          if (hasChildren) {
+            toggle.addEventListener("click", () => {
+              if (state.expandedModules.has(node.key)) {
+                state.expandedModules.delete(node.key);
+              } else {
+                state.expandedModules.add(node.key);
+              }
+              renderModuleTree();
+            });
+          }
           groups.appendChild(el);
         }
       }
 
-      function groupIncluded(groupId) {
-        return !state.includedGroups || state.includedGroups.has(groupId);
+      function buildModuleTree(report) {
+        const root = createModuleNode("root", "", -1);
+        const byKey = new Map();
+        for (const group of report.groups) {
+          const parts = modulePartsForGroup(group, report);
+          let current = root;
+          for (const part of parts) {
+            const path = current.path ? `${current.path}::${part}` : part;
+            if (!current.childMap.has(part)) {
+              const node = createModuleNode(part, path, current.depth + 1);
+              current.childMap.set(part, node);
+              byKey.set(node.key, node);
+            }
+            current = current.childMap.get(part);
+          }
+          current.groupIds.push(group.id);
+          for (const symbolId of group.symbol_ids) current.directSymbolIds.add(symbolId);
+        }
+
+        const allKeys = [];
+        finalizeModuleNode(root, report, allKeys);
+        root.byKey = byKey;
+        root.allKeys = allKeys;
+        return root;
       }
 
-      function toggleGroup(groupId) {
-        const allIds = state.report.groups.map(group => group.id);
-        const included = state.includedGroups ? new Set(state.includedGroups) : new Set(allIds);
-        if (included.has(groupId)) {
-          included.delete(groupId);
-        } else {
-          included.add(groupId);
+      function createModuleNode(name, path, depth) {
+        return {
+          key: path || "__root__",
+          name,
+          path,
+          depth,
+          childMap: new Map(),
+          children: [],
+          groupIds: [],
+          directSymbolIds: new Set(),
+          symbolIds: new Set(),
+          ownFrameSum: null,
+          worstPathMax: null,
+          priority: 4,
+          color: "#94a3b8",
+        };
+      }
+
+      function modulePartsForGroup(group, report) {
+        const groupParts = String(group.name || "").split("::").map(part => part.trim()).filter(Boolean);
+        if (groupParts.length) return groupParts;
+        const firstSymbol = report.symbols[group.symbol_ids[0]];
+        if (firstSymbol?.module_path?.length) return firstSymbol.module_path.filter(Boolean);
+        const crate = firstSymbol ? symbolCrate(firstSymbol) : null;
+        return [crate || "unknown"];
+      }
+
+      function finalizeModuleNode(node, report, allKeys) {
+        node.children = [...node.childMap.values()];
+        node.symbolIds = new Set(node.directSymbolIds);
+        for (const child of node.children) {
+          finalizeModuleNode(child, report, allKeys);
+          for (const symbolId of child.symbolIds) node.symbolIds.add(symbolId);
         }
-        state.includedGroups = included.size === allIds.length ? null : included;
+
+        let own = 0;
+        let hasOwn = false;
+        let worst = null;
+        let firstSymbol = null;
+        let priority = 4;
+        for (const symbolId of node.symbolIds) {
+          const symbol = report.symbols[symbolId];
+          if (!symbol) continue;
+          firstSymbol ??= symbol;
+          priority = Math.min(priority, groupPriority(symbol, report));
+          if (symbol.own_frame.bytes != null) {
+            own += symbol.own_frame.bytes;
+            hasOwn = true;
+          }
+          if (symbol.worst_path.bytes != null) {
+            worst = Math.max(worst ?? 0, symbol.worst_path.bytes);
+          }
+        }
+        node.ownFrameSum = hasOwn ? own : null;
+        node.worstPathMax = worst;
+        node.priority = priority;
+        node.color = firstSymbol ? groupColor(firstSymbol, report) : "#94a3b8";
+        node.children.sort((left, right) => {
+          const leftValue = left.ownFrameSum ?? left.worstPathMax ?? 0;
+          const rightValue = right.ownFrameSum ?? right.worstPathMax ?? 0;
+          return left.priority - right.priority || rightValue - leftValue || left.name.localeCompare(right.name);
+        });
+        if (node.key !== "__root__") allKeys.push(node.key);
+      }
+
+      function visibleModuleNodes(root) {
+        const out = [];
+        const visit = node => {
+          out.push(node);
+          if (!state.expandedModules.has(node.key)) return;
+          for (const child of node.children) visit(child);
+        };
+        for (const child of root.children) visit(child);
+        return out;
+      }
+
+      function moduleSelectionState(node, activeSymbolIds) {
+        if (!activeSymbolIds) return "checked";
+        if (!node.symbolIds.size) return "unchecked";
+        let selected = 0;
+        for (const symbolId of node.symbolIds) {
+          if (activeSymbolIds.has(symbolId)) selected += 1;
+        }
+        if (selected === 0) return "unchecked";
+        return selected === node.symbolIds.size ? "checked" : "mixed";
+      }
+
+      function toggleModule(moduleKey) {
+        const tree = state.moduleTree;
+        const node = tree.byKey.get(moduleKey);
+        if (!node) return;
+        const activeSymbolIds = includedSymbolIds();
+        const wasChecked = moduleSelectionState(node, activeSymbolIds) === "checked";
+        const included = state.includedModules ? new Set(state.includedModules) : new Set(tree.allKeys);
+        for (const key of moduleKeys(node)) {
+          if (wasChecked) {
+            included.delete(key);
+          } else {
+            included.add(key);
+          }
+        }
+        state.includedModules = included.size === tree.allKeys.length ? null : included;
+      }
+
+      function moduleKeys(node) {
+        const keys = [node.key];
+        for (const child of node.children) keys.push(...moduleKeys(child));
+        return keys;
       }
 
       function includedSymbolIds() {
-        if (!state.includedGroups) return null;
+        if (!state.includedModules) return null;
         const symbolIds = new Set();
-        for (const group of state.report.groups) {
-          if (state.includedGroups.has(group.id)) {
-            for (const symbolId of group.symbol_ids) symbolIds.add(symbolId);
-          }
+        for (const key of state.includedModules) {
+          const node = state.moduleTree.byKey.get(key);
+          if (!node) continue;
+          for (const symbolId of node.symbolIds) symbolIds.add(symbolId);
         }
         return symbolIds;
+      }
+
+      function initResizer(handle, side) {
+        handle.addEventListener("pointerdown", event => {
+          event.preventDefault();
+          const startX = event.clientX;
+          const startLeft = parseFloat(getComputedStyle(app).getPropertyValue("--left-width")) || 320;
+          const startRight = parseFloat(getComputedStyle(app).getPropertyValue("--right-width")) || 520;
+          handle.classList.add("dragging");
+          document.body.classList.add("resizing");
+
+          const onMove = moveEvent => {
+            const delta = moveEvent.clientX - startX;
+            if (side === "left") {
+              app.style.setProperty("--left-width", `${clamp(startLeft + delta, 240, 560)}px`);
+            } else {
+              app.style.setProperty("--right-width", `${clamp(startRight - delta, 360, 760)}px`);
+            }
+            draw();
+          };
+
+          const onUp = () => {
+            handle.classList.remove("dragging");
+            document.body.classList.remove("resizing");
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerup", onUp);
+          };
+
+          window.addEventListener("pointermove", onMove);
+          window.addEventListener("pointerup", onUp, { once: true });
+        });
+      }
+
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
       }
 
       function renderDetails() {

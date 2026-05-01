@@ -7,6 +7,8 @@
   --line: #d7dee8;
   --line-strong: #c3ccd9;
   --accent: #0f766e;
+  --left-width: 320px;
+  --right-width: 520px;
   color: var(--ink);
   background: var(--bg);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -47,7 +49,7 @@ button:disabled {
 
 .app {
   display: grid;
-  grid-template-columns: 320px minmax(440px, 1fr) 520px;
+  grid-template-columns: minmax(240px, var(--left-width)) 6px minmax(360px, 1fr) 6px minmax(360px, var(--right-width));
   grid-template-rows: 72px minmax(0, 1fr) 36px;
   gap: 10px;
   height: 100vh;
@@ -112,6 +114,18 @@ main,
 section {
   min-height: 0;
   overflow: hidden;
+}
+
+aside {
+  grid-column: 1;
+}
+
+main {
+  grid-column: 3;
+}
+
+section {
+  grid-column: 5;
 }
 
 aside,
@@ -215,22 +229,48 @@ canvas {
 }
 
 .moduleList {
+  display: flex;
   flex: 1;
   min-height: 0;
+  flex-direction: column;
+  gap: 5px;
   overflow: auto;
 }
 
 .moduleRow {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 42px;
   border: 1px solid #e1e7ef;
   border-radius: 8px;
-  padding: 7px 9px;
   background: #fbfcfe;
   font-size: 12px;
-  transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+}
+
+.moduleLine {
+  display: flex;
+  min-height: 38px;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px 6px calc(8px + var(--depth) * 14px);
+}
+
+.treeToggle {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border-color: transparent;
+  background: transparent;
+  padding: 0;
+  color: #667085;
+}
+
+.treeToggle:hover:not(:disabled) {
+  background: #eef6f5;
+}
+
+.treeToggle.placeholder {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .moduleRow input[type="checkbox"] {
@@ -243,7 +283,16 @@ canvas {
 .moduleRow:hover {
   border-color: rgba(15, 118, 110, 0.45);
   background: #ffffff;
-  transform: translateY(-1px);
+}
+
+.moduleRow.active {
+  border-color: rgba(15, 118, 110, 0.45);
+  background: #ffffff;
+}
+
+.moduleRow.mixed {
+  border-color: rgba(217, 119, 6, 0.36);
+  background: #fffdf7;
 }
 
 .moduleRow strong,
@@ -256,6 +305,7 @@ canvas {
 
 .moduleTitle {
   display: flex;
+  flex: 1;
   min-width: 0;
   align-items: center;
   gap: 8px;
@@ -273,9 +323,16 @@ canvas {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.46);
 }
 
-.moduleRow span,
+.moduleMeta,
 .muted {
   color: var(--muted);
+}
+
+.moduleMeta {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .detailCard {
@@ -339,6 +396,19 @@ dd {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.panelActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.panelActions button {
+  height: 30px;
+  padding: 0 9px;
+  font-size: 12px;
 }
 
 .panelHeader h2,
@@ -433,6 +503,42 @@ dd {
   color: var(--muted);
 }
 
+.resizer {
+  position: relative;
+  grid-row: 2;
+  min-height: 0;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.leftResizer {
+  grid-column: 2;
+}
+
+.rightResizer {
+  grid-column: 4;
+}
+
+.resizer::before {
+  content: "";
+  position: absolute;
+  inset: 8px 2px;
+  border-radius: 999px;
+  background: rgba(102, 112, 133, 0.22);
+  transition: background 0.12s ease, transform 0.12s ease;
+}
+
+.resizer:hover::before {
+  background: rgba(15, 118, 110, 0.55);
+  transform: scaleX(1.45);
+}
+
+body.resizing,
+body.resizing * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
 @media (max-width: 1080px) {
   .app {
     grid-template-columns: 1fr;
@@ -442,6 +548,16 @@ dd {
   header,
   footer {
     grid-column: 1;
+  }
+
+  aside,
+  main,
+  section {
+    grid-column: 1;
+  }
+
+  .resizer {
+    display: none;
   }
 
   header {

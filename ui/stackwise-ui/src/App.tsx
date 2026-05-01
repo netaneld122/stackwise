@@ -1,6 +1,15 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type Dispatch,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 import { Search, SquareArrowOutUpRight } from "lucide-react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   filterSymbols,
   formatBytes,
@@ -9,7 +18,6 @@ import {
   primaryCrateName,
   symbolCrate,
   type ConfidenceFilter,
-  type GroupReport,
   type Metric,
   type StackwiseReport,
   type SymbolContext,
@@ -42,10 +50,12 @@ export function App() {
 function ReportView({ report }: { report: StackwiseReport }) {
   const { query, setQuery, metric, setMetric, confidence, setConfidence, selectedSymbol } =
     useStackwiseStore();
-  const [includedGroups, setIncludedGroups] = useState<Set<number> | null>(null);
+  const moduleTree = useMemo(() => buildModuleTree(report), [report]);
+  const [includedModules, setIncludedModules] = useState<Set<string> | null>(null);
+  const [expandedModules, setExpandedModules] = useState<Set<string>>(new Set());
   const includedSymbolIds = useMemo(
-    () => symbolIdsForGroups(report.groups, includedGroups),
-    [report.groups, includedGroups],
+    () => symbolIdsForModules(moduleTree, includedModules),
+    [moduleTree, includedModules],
   );
   const symbols = useMemo(
     () =>
@@ -91,9 +101,11 @@ function ReportView({ report }: { report: StackwiseReport }) {
       }
       left={
         <ModuleList
-          report={report}
-          includedGroups={includedGroups}
-          setIncludedGroups={setIncludedGroups}
+          moduleTree={moduleTree}
+          includedModules={includedModules}
+          setIncludedModules={setIncludedModules}
+          expandedModules={expandedModules}
+          setExpandedModules={setExpandedModules}
         />
       }
       right={<Details symbol={selected} />}
@@ -110,14 +122,45 @@ function Shell({
   right,
   status,
 }: {
-  children: React.ReactNode;
-  toolbar?: React.ReactNode;
-  left?: React.ReactNode;
-  right?: React.ReactNode;
+  children: ReactNode;
+  toolbar?: ReactNode;
+  left?: ReactNode;
+  right?: ReactNode;
   status: string;
 }) {
+  const [paneSizes, setPaneSizes] = useState({ left: 320, right: 520 });
+  const appStyle = {
+    "--left-width": `${paneSizes.left}px`,
+    "--right-width": `${paneSizes.right}px`,
+  } as CSSProperties;
+
+  const beginResize = (side: "left" | "right") => (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startLeft = paneSizes.left;
+    const startRight = paneSizes.right;
+    document.body.classList.add("resizing");
+
+    const onMove = (moveEvent: PointerEvent) => {
+      const delta = moveEvent.clientX - startX;
+      setPaneSizes({
+        left: side === "left" ? clamp(startLeft + delta, 240, 560) : startLeft,
+        right: side === "right" ? clamp(startRight - delta, 360, 760) : startRight,
+      });
+    };
+
+    const onUp = () => {
+      document.body.classList.remove("resizing");
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp, { once: true });
+  };
+
   return (
-    <div className="app">
+    <div className="app" style={appStyle}>
       <header>
         <div className="brand">
           <div className="mark" aria-hidden="true" />
@@ -126,7 +169,19 @@ function Shell({
         {toolbar}
       </header>
       <aside>{left}</aside>
+      <div
+        className="resizer leftResizer"
+        role="separator"
+        aria-label="Resize modules panel"
+        onPointerDown={beginResize("left")}
+      />
       <main>{children}</main>
+      <div
+        className="resizer rightResizer"
+        role="separator"
+        aria-label="Resize symbols panel"
+        onPointerDown={beginResize("right")}
+      />
       <section>{right}</section>
       <footer>{status}</footer>
     </div>
@@ -134,77 +189,85 @@ function Shell({
 }
 
 function ModuleList({
-  report,
-  includedGroups,
-  setIncludedGroups,
+  moduleTree,
+  includedModules,
+  setIncludedModules,
+  expandedModules,
+  setExpandedModules,
 }: {
-  report: StackwiseReport;
-  includedGroups: Set<number> | null;
-  setIncludedGroups: Dispatch<SetStateAction<Set<number> | null>>;
+  moduleTree: ModuleTree;
+  includedModules: Set<string> | null;
+  setIncludedModules: Dispatch<SetStateAction<Set<string> | null>>;
+  expandedModules: Set<string>;
+  setExpandedModules: Dispatch<SetStateAction<Set<string>>>;
 }) {
-  const parentRef = useRef<HTMLDivElement>(null);
-  const groups = useMemo(
-    () =>
-      [...report.groups].sort((left, right) => {
-        const leftSymbol = report.symbols[left.symbol_ids[0]];
-        const rightSymbol = report.symbols[right.symbol_ids[0]];
-        const leftPriority = leftSymbol ? groupPriority(leftSymbol, report) : 3;
-        const rightPriority = rightSymbol ? groupPriority(rightSymbol, report) : 3;
-        const leftValue = left.own_frame_sum ?? left.worst_path_max ?? 0;
-        const rightValue = right.own_frame_sum ?? right.worst_path_max ?? 0;
-        return leftPriority - rightPriority || rightValue - leftValue || left.name.localeCompare(right.name);
-      }),
-    [report],
+  const activeSymbolIds = useMemo(
+    () => symbolIdsForModules(moduleTree, includedModules),
+    [moduleTree, includedModules],
   );
-  const rowVirtualizer = useVirtualizer({
-    count: groups.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 48,
-  });
+  const visibleNodes = useMemo(
+    () => visibleModuleNodes(moduleTree, expandedModules),
+    [moduleTree, expandedModules],
+  );
+
+  const toggleExpanded = (node: ModuleNode) => {
+    setExpandedModules((current) => {
+      const next = new Set(current);
+      if (next.has(node.key)) next.delete(node.key);
+      else next.add(node.key);
+      return next;
+    });
+  };
+
+  const toggleSelected = (node: ModuleNode) => {
+    setIncludedModules((current) => toggleModuleSelection(moduleTree, node, current));
+  };
 
   return (
     <>
       <div className="panelHeader">
         <h2>Modules</h2>
-        <button type="button" onClick={() => setIncludedGroups(null)}>Show all</button>
-      </div>
-      <div ref={parentRef} className="moduleList">
-        <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: "relative" }}>
-          {rowVirtualizer.getVirtualItems().map((row) => {
-            const group = groups[row.index];
-            const firstSymbol = report.symbols[group.symbol_ids[0]];
-            const checked = !includedGroups || includedGroups.has(group.id);
-            return (
-              <label
-                className="moduleRow"
-                key={group.id}
-                style={{ transform: `translateY(${row.start}px)` }}
-              >
-                <span className="moduleTitle">
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => {
-                      setIncludedGroups((current) => {
-                        const allIds = report.groups.map((item) => item.id);
-                        const next = current ? new Set(current) : new Set(allIds);
-                        if (next.has(group.id)) next.delete(group.id);
-                        else next.add(group.id);
-                        return next.size === allIds.length ? null : next;
-                      });
-                    }}
-                  />
-                  <span
-                    className="swatch"
-                    style={{ background: firstSymbol ? groupColor(firstSymbol, report) : "#94a3b8" }}
-                  />
-                  <strong>{group.name}</strong>
-                </span>
-                <span>{group.symbol_ids.length} symbols</span>
-              </label>
-            );
-          })}
+        <div className="panelActions">
+          <button type="button" onClick={() => setIncludedModules(null)}>Select all</button>
+          <button type="button" onClick={() => setIncludedModules(new Set())}>Deselect all</button>
         </div>
+      </div>
+      <div className="moduleList">
+        {visibleNodes.map((node) => {
+          const selection = moduleSelectionState(node, activeSymbolIds);
+          const hasChildren = node.children.length > 0;
+          return (
+            <div
+              className={`moduleRow${selection === "checked" ? " active" : ""}${selection === "mixed" ? " mixed" : ""}`}
+              key={node.key}
+            >
+              <div className="moduleLine" style={{ "--depth": node.depth } as CSSProperties}>
+                <button
+                  type="button"
+                  className={`treeToggle${hasChildren ? "" : " placeholder"}`}
+                  aria-label={`${expandedModules.has(node.key) ? "Collapse" : "Expand"} ${node.path}`}
+                  onClick={() => toggleExpanded(node)}
+                  disabled={!hasChildren}
+                >
+                  {hasChildren ? (expandedModules.has(node.key) ? "v" : ">") : ">"}
+                </button>
+                <input
+                  ref={(input) => {
+                    if (input) input.indeterminate = selection === "mixed";
+                  }}
+                  type="checkbox"
+                  checked={selection === "checked"}
+                  onChange={() => toggleSelected(node)}
+                />
+                <span className="moduleTitle" title={node.path}>
+                  <span className="swatch" style={{ background: node.color }} />
+                  <strong>{node.name}</strong>
+                </span>
+                <span className="moduleMeta">{node.symbolIds.size.toLocaleString()} symbols</span>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </>
   );
@@ -420,15 +483,173 @@ function trim(text: string, max: number): string {
   return `${text.slice(0, max - 3)}...`;
 }
 
-function symbolIdsForGroups(groups: GroupReport[], includedGroups: Set<number> | null): Set<number> | null {
-  if (!includedGroups) return null;
-  const ids = new Set<number>();
-  for (const group of groups) {
-    if (includedGroups.has(group.id)) {
-      for (const symbolId of group.symbol_ids) ids.add(symbolId);
+interface ModuleNode {
+  key: string;
+  name: string;
+  path: string;
+  depth: number;
+  childMap: Map<string, ModuleNode>;
+  children: ModuleNode[];
+  directSymbolIds: Set<number>;
+  symbolIds: Set<number>;
+  ownFrameSum: number | null;
+  worstPathMax: number | null;
+  priority: number;
+  color: string;
+}
+
+interface ModuleTree extends ModuleNode {
+  byKey: Map<string, ModuleNode>;
+  allKeys: string[];
+}
+
+function buildModuleTree(report: StackwiseReport): ModuleTree {
+  const root = createModuleNode("root", "", -1) as ModuleTree;
+  root.byKey = new Map();
+  root.allKeys = [];
+
+  for (const group of report.groups) {
+    const parts = modulePartsForGroup(group.name, group.symbol_ids, report);
+    let current: ModuleNode = root;
+    for (const part of parts) {
+      const path = current.path ? `${current.path}::${part}` : part;
+      let child = current.childMap.get(part);
+      if (!child) {
+        child = createModuleNode(part, path, current.depth + 1);
+        current.childMap.set(part, child);
+        root.byKey.set(child.key, child);
+      }
+      current = child;
+    }
+    for (const symbolId of group.symbol_ids) current.directSymbolIds.add(symbolId);
+  }
+
+  finalizeModuleNode(root, report, root.allKeys);
+  return root;
+}
+
+function createModuleNode(name: string, path: string, depth: number): ModuleNode {
+  return {
+    key: path || "__root__",
+    name,
+    path,
+    depth,
+    childMap: new Map(),
+    children: [],
+    directSymbolIds: new Set(),
+    symbolIds: new Set(),
+    ownFrameSum: null,
+    worstPathMax: null,
+    priority: 4,
+    color: "#94a3b8",
+  };
+}
+
+function modulePartsForGroup(groupName: string, symbolIds: number[], report: StackwiseReport): string[] {
+  const fromGroup = groupName.split("::").map((part) => part.trim()).filter(Boolean);
+  if (fromGroup.length > 0) return fromGroup;
+
+  const firstSymbol = report.symbols[symbolIds[0]];
+  if (firstSymbol?.module_path.length) return firstSymbol.module_path;
+  const crate = firstSymbol ? symbolCrate(firstSymbol) : null;
+  return [crate ?? "unknown"];
+}
+
+function finalizeModuleNode(node: ModuleNode, report: StackwiseReport, allKeys: string[]) {
+  node.children = [...node.childMap.values()];
+  node.symbolIds = new Set(node.directSymbolIds);
+  for (const child of node.children) {
+    finalizeModuleNode(child, report, allKeys);
+    for (const symbolId of child.symbolIds) node.symbolIds.add(symbolId);
+  }
+
+  let own = 0;
+  let hasOwn = false;
+  let worst: number | null = null;
+  let firstSymbol: SymbolReport | null = null;
+  let priority = 4;
+  for (const symbolId of node.symbolIds) {
+    const symbol = report.symbols[symbolId];
+    if (!symbol) continue;
+    firstSymbol ??= symbol;
+    priority = Math.min(priority, groupPriority(symbol, report));
+    if (symbol.own_frame.bytes != null) {
+      own += symbol.own_frame.bytes;
+      hasOwn = true;
+    }
+    if (symbol.worst_path.bytes != null) {
+      worst = Math.max(worst ?? 0, symbol.worst_path.bytes);
     }
   }
+
+  node.ownFrameSum = hasOwn ? own : null;
+  node.worstPathMax = worst;
+  node.priority = priority;
+  node.color = firstSymbol ? groupColor(firstSymbol, report) : "#94a3b8";
+  node.children.sort((left, right) => {
+    const leftValue = left.ownFrameSum ?? left.worstPathMax ?? 0;
+    const rightValue = right.ownFrameSum ?? right.worstPathMax ?? 0;
+    return left.priority - right.priority || rightValue - leftValue || left.name.localeCompare(right.name);
+  });
+  if (node.key !== "__root__") allKeys.push(node.key);
+}
+
+function visibleModuleNodes(root: ModuleTree, expandedModules: Set<string>): ModuleNode[] {
+  const nodes: ModuleNode[] = [];
+  const visit = (node: ModuleNode) => {
+    nodes.push(node);
+    if (!expandedModules.has(node.key)) return;
+    for (const child of node.children) visit(child);
+  };
+  for (const child of root.children) visit(child);
+  return nodes;
+}
+
+function moduleSelectionState(node: ModuleNode, activeSymbolIds: Set<number> | null): "checked" | "mixed" | "unchecked" {
+  if (!activeSymbolIds) return "checked";
+  if (node.symbolIds.size === 0) return "unchecked";
+  let selected = 0;
+  for (const symbolId of node.symbolIds) {
+    if (activeSymbolIds.has(symbolId)) selected += 1;
+  }
+  if (selected === 0) return "unchecked";
+  return selected === node.symbolIds.size ? "checked" : "mixed";
+}
+
+function toggleModuleSelection(
+  tree: ModuleTree,
+  node: ModuleNode,
+  current: Set<string> | null,
+): Set<string> | null {
+  const activeSymbolIds = symbolIdsForModules(tree, current);
+  const wasChecked = moduleSelectionState(node, activeSymbolIds) === "checked";
+  const next = current ? new Set(current) : new Set(tree.allKeys);
+  for (const key of moduleKeys(node)) {
+    if (wasChecked) next.delete(key);
+    else next.add(key);
+  }
+  return next.size === tree.allKeys.length ? null : next;
+}
+
+function moduleKeys(node: ModuleNode): string[] {
+  const keys = [node.key];
+  for (const child of node.children) keys.push(...moduleKeys(child));
+  return keys;
+}
+
+function symbolIdsForModules(tree: ModuleTree, includedModules: Set<string> | null): Set<number> | null {
+  if (!includedModules) return null;
+  const ids = new Set<number>();
+  for (const key of includedModules) {
+    const node = tree.byKey.get(key);
+    if (!node) continue;
+    for (const symbolId of node.symbolIds) ids.add(symbolId);
+  }
   return ids;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 function sourceHref(file: string, line?: number | null): string {
