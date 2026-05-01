@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stackwise</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f7f8fb;
+        color: #171923;
+      }
+      body { margin: 0; }
+      .app {
+        display: grid;
+        grid-template-columns: 280px minmax(360px, 1fr) 360px;
+        grid-template-rows: 56px minmax(0, 1fr) 32px;
+        height: 100vh;
+      }
+      header, footer {
+        grid-column: 1 / -1;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 16px;
+        border-bottom: 1px solid #d8deea;
+        background: #ffffff;
+      }
+      footer {
+        border-top: 1px solid #d8deea;
+        border-bottom: 0;
+        font-size: 12px;
+        color: #4a5568;
+      }
+      aside, main, section {
+        min-height: 0;
+        overflow: hidden;
+      }
+      aside {
+        border-right: 1px solid #d8deea;
+        background: #ffffff;
+        padding: 12px;
+      }
+      section {
+        border-left: 1px solid #d8deea;
+        background: #ffffff;
+        padding: 14px;
+      }
+      main {
+        position: relative;
+        background: #eef2f7;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      input, select, button {
+        height: 34px;
+        border: 1px solid #c8d0df;
+        border-radius: 6px;
+        background: #ffffff;
+        padding: 0 10px;
+        font: inherit;
+      }
+      button { cursor: pointer; }
+      h1 { font-size: 16px; margin: 0 10px 0 0; }
+      h2 { font-size: 13px; margin: 0 0 10px; color: #4a5568; }
+      .list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        overflow: auto;
+        height: calc(100% - 28px);
+      }
+      .row {
+        border: 1px solid #e1e6ef;
+        border-radius: 6px;
+        padding: 7px;
+        background: #fbfcfe;
+        font-size: 12px;
+      }
+      .row strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .muted { color: #667085; }
+      .metric { font-variant-numeric: tabular-nums; }
+      .empty {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        color: #667085;
+      }
+      @media (max-width: 920px) {
+        .app { grid-template-columns: 1fr; grid-template-rows: 56px 180px minmax(320px, 1fr) 260px 32px; }
+        header, footer { grid-column: 1; }
+        aside, section { border: 0; border-top: 1px solid #d8deea; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header>
+        <h1>Stackwise</h1>
+        <input id="search" placeholder="Search symbols" />
+        <select id="metric">
+          <option value="own">Own frame</option>
+          <option value="worst">Worst path</option>
+          <option value="code">Code size</option>
+          <option value="risk">Unresolved risk</option>
+        </select>
+        <select id="confidence">
+          <option value="all">All confidence</option>
+          <option value="known">Known frames</option>
+          <option value="unknown">Unknown only</option>
+        </select>
+      </header>
+      <aside>
+        <h2>Modules</h2>
+        <div id="groups" class="list"></div>
+      </aside>
+      <main>
+        <canvas id="treemap"></canvas>
+        <div id="empty" class="empty">Loading report...</div>
+      </main>
+      <section>
+        <h2>Symbol</h2>
+        <div id="details" class="muted">Select a rectangle.</div>
+      </section>
+      <footer id="status">Loading...</footer>
+    </div>
+    <script>
+      const state = { report: null, filtered: [], rects: [], selected: null };
+      const canvas = document.getElementById("treemap");
+      const ctx = canvas.getContext("2d");
+      const search = document.getElementById("search");
+      const metric = document.getElementById("metric");
+      const confidence = document.getElementById("confidence");
+      const empty = document.getElementById("empty");
+      const details = document.getElementById("details");
+      const status = document.getElementById("status");
+      const groups = document.getElementById("groups");
+
+      fetch("/report.json").then(r => r.json()).then(report => {
+        state.report = report;
+        renderAll();
+      }).catch(error => {
+        empty.textContent = `Failed to load report: ${error}`;
+        status.textContent = "Failed";
+      });
+
+      search.addEventListener("input", renderAll);
+      metric.addEventListener("change", renderAll);
+      confidence.addEventListener("change", renderAll);
+      window.addEventListener("resize", draw);
+      canvas.addEventListener("click", event => {
+        const rect = canvas.getBoundingClientRect();
+        const x = (event.clientX - rect.left) * devicePixelRatio;
+        const y = (event.clientY - rect.top) * devicePixelRatio;
+        state.selected = state.rects.find(r => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h)?.symbol ?? null;
+        renderDetails();
+        draw();
+      });
+
+      function renderAll() {
+        const q = search.value.toLowerCase();
+        const confidenceMode = confidence.value;
+        state.filtered = state.report.symbols.filter(symbol => {
+          const matches = !q || symbol.demangled.toLowerCase().includes(q) || symbol.name.toLowerCase().includes(q);
+          const known = symbol.own_frame.bytes != null;
+          const confidenceOk = confidenceMode === "all" || (confidenceMode === "known" && known) || (confidenceMode === "unknown" && !known);
+          return matches && confidenceOk;
+        });
+        renderGroups();
+        renderDetails();
+        draw();
+        empty.style.display = state.filtered.length ? "none" : "grid";
+        status.textContent = `${state.report.artifact.file_name} | ${state.report.summary.symbol_count} symbols | ${state.report.summary.known_frame_count} known frames | ${state.report.summary.unknown_frame_count} unknown`;
+      }
+
+      function renderGroups() {
+        groups.innerHTML = "";
+        for (const group of state.report.groups.slice(0, 80)) {
+          const el = document.createElement("div");
+          el.className = "row";
+          el.innerHTML = `<strong>${escapeHtml(group.name)}</strong><span class="muted">${group.symbol_ids.length} symbols</span>`;
+          groups.appendChild(el);
+        }
+      }
+
+      function renderDetails() {
+        const symbol = state.selected;
+        if (!symbol) {
+          details.textContent = "Select a rectangle.";
+          return;
+        }
+        details.innerHTML = `
+          <div class="row">
+            <strong>${escapeHtml(symbol.demangled)}</strong>
+            <p class="muted">${escapeHtml(symbol.name)}</p>
+            <p>Own frame: <span class="metric">${formatBytes(symbol.own_frame.bytes)}</span></p>
+            <p>Worst path: <span class="metric">${formatBytes(symbol.worst_path.bytes)}</span></p>
+            <p>Confidence: ${symbol.confidence}</p>
+            <p>Evidence: ${symbol.evidence.map(e => escapeHtml(e.source)).join(", ")}</p>
+            <p>Unresolved: ${symbol.unresolved_reasons.map(escapeHtml).join(", ") || "none"}</p>
+          </div>`;
+      }
+
+      function draw() {
+        const bounds = canvas.getBoundingClientRect();
+        canvas.width = Math.max(1, Math.floor(bounds.width * devicePixelRatio));
+        canvas.height = Math.max(1, Math.floor(bounds.height * devicePixelRatio));
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        state.rects = squarify(state.filtered.map(symbol => ({ symbol, value: metricValue(symbol) })).filter(item => item.value > 0), 0, 0, canvas.width, canvas.height);
+        for (const rect of state.rects) {
+          ctx.fillStyle = colorFor(rect.symbol);
+          ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+          ctx.strokeStyle = "rgba(255,255,255,0.8)";
+          ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
+          if (rect.symbol === state.selected) {
+            ctx.strokeStyle = "#111827";
+            ctx.lineWidth = 3;
+            ctx.strokeRect(rect.x + 2, rect.y + 2, rect.w - 4, rect.h - 4);
+            ctx.lineWidth = 1;
+          }
+          if (rect.w > 70 && rect.h > 28) {
+            ctx.fillStyle = "#111827";
+            ctx.font = `${12 * devicePixelRatio}px system-ui`;
+            ctx.fillText(trimMiddle(rect.symbol.demangled, Math.floor(rect.w / (7 * devicePixelRatio))), rect.x + 6, rect.y + 16 * devicePixelRatio);
+          }
+        }
+      }
+
+      function metricValue(symbol) {
+        switch (metric.value) {
+          case "worst": return symbol.worst_path.bytes ?? 0;
+          case "code": return symbol.size_bytes ?? 0;
+          case "risk": return symbol.own_frame.bytes == null ? Math.max(1, symbol.size_bytes ?? 1) : 0;
+          default: return symbol.own_frame.bytes ?? 0;
+        }
+      }
+
+      function colorFor(symbol) {
+        if (symbol.own_frame.bytes == null) return "#d97706";
+        if (symbol.worst_path.status === "recursive") return "#dc2626";
+        if (symbol.confidence === "exact") return "#059669";
+        if (symbol.confidence === "high") return "#2563eb";
+        return "#64748b";
+      }
+
+      function squarify(items, x, y, w, h) {
+        const total = items.reduce((sum, item) => sum + item.value, 0);
+        if (!total) return [];
+        const sorted = items.sort((a, b) => b.value - a.value).slice(0, 2000);
+        const rects = [];
+        layout(sorted.map(item => ({ ...item, area: item.value / total * w * h })), x, y, w, h, rects);
+        return rects;
+      }
+
+      function layout(items, x, y, w, h, out) {
+        if (!items.length || w <= 0 || h <= 0) return;
+        if (items.length === 1) {
+          out.push({ x, y, w, h, symbol: items[0].symbol });
+          return;
+        }
+        const horizontal = w >= h;
+        const half = items.reduce((sum, item) => sum + item.area, 0) / 2;
+        let acc = 0, split = 0;
+        while (split < items.length - 1 && acc + items[split].area <= half) acc += items[split++].area;
+        split = Math.max(1, split);
+        const first = items.slice(0, split);
+        const second = items.slice(split);
+        const firstArea = first.reduce((sum, item) => sum + item.area, 0);
+        const ratio = firstArea / (firstArea + second.reduce((sum, item) => sum + item.area, 0));
+        if (horizontal) {
+          const ww = w * ratio;
+          layout(first, x, y, ww, h, out);
+          layout(second, x + ww, y, w - ww, h, out);
+        } else {
+          const hh = h * ratio;
+          layout(first, x, y, w, hh, out);
+          layout(second, x, y + hh, w, h - hh, out);
+        }
+      }
+
+      function formatBytes(value) {
+        return value == null ? "unknown" : `${value} B`;
+      }
+
+      function trimMiddle(text, max) {
+        if (text.length <= max) return text;
+        if (max < 8) return text.slice(0, max);
+        return `${text.slice(0, max - 4)}...`;
+      }
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      }
+    </script>
+  </body>
+</html>

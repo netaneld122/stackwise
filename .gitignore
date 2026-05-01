@@ -1,0 +1,8 @@
+/target/
+/fixtures/*/target/
+/ui/stackwise-ui/node_modules/
+/ui/stackwise-ui/dist/
+/ui/stackwise-ui/test-results/
+/ui/stackwise-ui/playwright-report/
+/ui/stackwise-ui/tsconfig.tsbuildinfo
+*.stackwise.tmp
