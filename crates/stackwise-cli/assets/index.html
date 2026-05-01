@@ -7,130 +7,500 @@
     <style>
       :root {
         color-scheme: light;
+        --bg: #edf1f5;
+        --panel: rgba(255, 255, 255, 0.92);
+        --panel-strong: #ffffff;
+        --ink: #141820;
+        --muted: #667085;
+        --soft: #f4f6f8;
+        --line: #d7dee8;
+        --line-strong: #c3ccd9;
+        --accent: #0f766e;
+        --blue: #2563eb;
+        --green: #059669;
+        --amber: #d97706;
+        --red: #dc2626;
+        --violet: #6d5bd0;
         font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        background: #f7f8fb;
-        color: #171923;
+        background: var(--bg);
+        color: var(--ink);
       }
+
+      * { box-sizing: border-box; }
       body { margin: 0; }
+
       .app {
         display: grid;
-        grid-template-columns: 280px minmax(360px, 1fr) 360px;
-        grid-template-rows: 56px minmax(0, 1fr) 32px;
+        grid-template-columns: 300px minmax(420px, 1fr) 380px;
+        grid-template-rows: 72px minmax(0, 1fr) 36px;
+        gap: 10px;
         height: 100vh;
+        padding: 10px;
+        background:
+          linear-gradient(180deg, #f8fafc 0%, #eef2f6 48%, #e8edf2 100%);
       }
-      header, footer {
+
+      header,
+      footer,
+      aside,
+      main,
+      section {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        box-shadow: 0 18px 46px rgba(15, 23, 42, 0.08);
+        backdrop-filter: blur(16px);
+      }
+
+      header,
+      footer {
         grid-column: 1 / -1;
         display: flex;
         align-items: center;
-        gap: 12px;
-        padding: 0 16px;
-        border-bottom: 1px solid #d8deea;
-        background: #ffffff;
       }
+
+      header {
+        gap: 14px;
+        padding: 10px 12px;
+      }
+
       footer {
-        border-top: 1px solid #d8deea;
-        border-bottom: 0;
+        gap: 10px;
+        padding: 0 12px;
+        color: var(--muted);
         font-size: 12px;
-        color: #4a5568;
+        font-variant-numeric: tabular-nums;
       }
-      aside, main, section {
+
+      aside,
+      main,
+      section {
         min-height: 0;
         overflow: hidden;
       }
-      aside {
-        border-right: 1px solid #d8deea;
-        background: #ffffff;
-        padding: 12px;
-      }
+
+      aside,
       section {
-        border-left: 1px solid #d8deea;
-        background: #ffffff;
+        display: flex;
+        flex-direction: column;
         padding: 14px;
       }
+
       main {
         position: relative;
-        background: #eef2f7;
+        background: #f7f9fb;
       }
+
       canvas {
         display: block;
         width: 100%;
         height: 100%;
       }
-      input, select, button {
-        height: 34px;
-        border: 1px solid #c8d0df;
-        border-radius: 6px;
-        background: #ffffff;
-        padding: 0 10px;
-        font: inherit;
+
+      h1,
+      h2,
+      p {
+        margin: 0;
       }
-      button { cursor: pointer; }
-      h1 { font-size: 16px; margin: 0 10px 0 0; }
-      h2 { font-size: 13px; margin: 0 0 10px; color: #4a5568; }
+
+      h1 {
+        font-size: 17px;
+        letter-spacing: 0;
+      }
+
+      h2 {
+        color: #344054;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      input,
+      select,
+      button {
+        height: 36px;
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        background: var(--panel-strong);
+        color: var(--ink);
+        font: inherit;
+        font-size: 13px;
+      }
+
+      input,
+      select {
+        outline: 0;
+      }
+
+      input:focus,
+      select:focus,
+      button:focus-visible,
+      .row:focus-visible {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14);
+      }
+
+      button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        padding: 0 11px;
+        cursor: pointer;
+      }
+
+      button:hover:not(:disabled) {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
+      button:disabled {
+        color: #98a2b3;
+        cursor: not-allowed;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 170px;
+      }
+
+      .mark {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        background:
+          linear-gradient(135deg, #0f766e 0%, #22c55e 48%, #2563eb 100%);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.42), 0 10px 22px rgba(15, 118, 110, 0.18);
+      }
+
+      .summaryChips,
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .summaryChips {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        height: 28px;
+        max-width: 190px;
+        border: 1px solid #dce3ec;
+        border-radius: 8px;
+        padding: 0 9px;
+        background: rgba(255, 255, 255, 0.72);
+        color: #344054;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .chip strong {
+        color: var(--ink);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .searchBox {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 280px;
+        height: 36px;
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        padding: 0 10px;
+        background: var(--panel-strong);
+      }
+
+      .searchBox input {
+        width: 100%;
+        min-width: 0;
+        height: 32px;
+        border: 0;
+        padding: 0;
+        background: transparent;
+      }
+
+      .panelHeader {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
       .list {
         display: flex;
+        flex: 1;
+        min-height: 0;
         flex-direction: column;
-        gap: 6px;
+        gap: 7px;
         overflow: auto;
-        height: calc(100% - 28px);
+        padding-right: 2px;
       }
+
       .row {
-        border: 1px solid #e1e6ef;
-        border-radius: 6px;
-        padding: 7px;
+        width: 100%;
+        border: 1px solid #e1e7ef;
+        border-radius: 8px;
+        padding: 9px;
         background: #fbfcfe;
+        color: inherit;
+        text-align: left;
+        transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+      }
+
+      .row:hover,
+      .row.active {
+        border-color: rgba(15, 118, 110, 0.45);
+        background: #ffffff;
+        transform: translateY(-1px);
+      }
+
+      .row strong,
+      .detailName {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .rowMeta,
+      .muted {
+        color: var(--muted);
+      }
+
+      .rowMeta {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        margin-top: 4px;
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .metric {
+        font-variant-numeric: tabular-nums;
+      }
+
+      .detail {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+        flex-direction: column;
+        gap: 12px;
+        overflow: auto;
+      }
+
+      .detailCard {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .detailName {
+        font-size: 14px;
+        line-height: 1.35;
+      }
+
+      code {
+        overflow-wrap: anywhere;
+        border: 1px solid #e1e7ef;
+        border-radius: 8px;
+        background: #f6f8fb;
+        padding: 9px;
+        color: #475467;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      dl {
+        display: grid;
+        grid-template-columns: 118px 1fr;
+        gap: 9px;
+        margin: 0;
+        font-size: 13px;
+      }
+
+      dt {
+        color: var(--muted);
+      }
+
+      dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .pillRow {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .pill {
+        border-radius: 8px;
+        padding: 4px 7px;
+        background: #eef6f5;
+        color: #0f766e;
         font-size: 12px;
       }
-      .row strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .muted { color: #667085; }
-      .metric { font-variant-numeric: tabular-nums; }
+
       .empty {
         position: absolute;
         inset: 0;
         display: grid;
         place-items: center;
-        color: #667085;
+        color: var(--muted);
+        font-size: 14px;
       }
-      @media (max-width: 920px) {
-        .app { grid-template-columns: 1fr; grid-template-rows: 56px 180px minmax(320px, 1fr) 260px 32px; }
-        header, footer { grid-column: 1; }
-        aside, section { border: 0; border-top: 1px solid #d8deea; }
+
+      .tooltip {
+        position: absolute;
+        z-index: 4;
+        max-width: 360px;
+        pointer-events: none;
+        border: 1px solid rgba(20, 24, 32, 0.12);
+        border-radius: 8px;
+        padding: 9px 10px;
+        background: rgba(255, 255, 255, 0.96);
+        box-shadow: 0 16px 36px rgba(15, 23, 42, 0.16);
+        color: var(--ink);
+        font-size: 12px;
+        transform: translate(12px, 12px);
+      }
+
+      .tooltip strong {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        margin-bottom: 4px;
+      }
+
+      .hidden { display: none; }
+
+      @media (max-width: 1080px) {
+        .app {
+          grid-template-columns: 1fr;
+          grid-template-rows: auto 190px minmax(340px, 1fr) 300px 36px;
+        }
+
+        header,
+        footer {
+          grid-column: 1;
+        }
+
+        header {
+          flex-wrap: wrap;
+        }
+
+        .brand {
+          min-width: 145px;
+        }
+
+        .summaryChips {
+          order: 3;
+          flex-basis: 100%;
+        }
+
+        .controls {
+          flex: 1;
+          justify-content: flex-end;
+        }
+
+        .searchBox {
+          width: min(100%, 320px);
+        }
+      }
+
+      @media (max-width: 680px) {
+        .app {
+          padding: 6px;
+          gap: 6px;
+          grid-template-rows: auto 170px minmax(320px, 1fr) 300px 36px;
+        }
+
+        .controls {
+          flex-wrap: wrap;
+          justify-content: flex-start;
+        }
+
+        .searchBox,
+        select {
+          width: 100%;
+        }
+
+        .summaryChips {
+          flex-wrap: wrap;
+        }
       }
     </style>
   </head>
   <body>
     <div class="app">
       <header>
-        <h1>Stackwise</h1>
-        <input id="search" placeholder="Search symbols" />
-        <select id="metric">
-          <option value="own">Own frame</option>
-          <option value="worst">Worst path</option>
-          <option value="code">Code size</option>
-          <option value="risk">Unresolved risk</option>
-        </select>
-        <select id="confidence">
-          <option value="all">All confidence</option>
-          <option value="known">Known frames</option>
-          <option value="unknown">Unknown only</option>
-        </select>
+        <div class="brand">
+          <div class="mark" aria-hidden="true"></div>
+          <h1>Stackwise</h1>
+        </div>
+        <div id="summaryChips" class="summaryChips"></div>
+        <div class="controls">
+          <label class="searchBox" aria-label="Search symbols">
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="m21 21-4.35-4.35M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            </svg>
+            <input id="search" placeholder="Symbol, crate, module" />
+          </label>
+          <select id="metric" aria-label="Metric">
+            <option value="own">Own frame</option>
+            <option value="worst">Worst path</option>
+            <option value="code">Code size</option>
+            <option value="risk">Unresolved risk</option>
+          </select>
+          <select id="confidence" aria-label="Confidence">
+            <option value="all">All confidence</option>
+            <option value="known">Known frames</option>
+            <option value="unknown">Unknown only</option>
+          </select>
+        </div>
       </header>
+
       <aside>
-        <h2>Modules</h2>
+        <div class="panelHeader">
+          <h2>Modules</h2>
+          <button id="clearGroup" type="button">All</button>
+        </div>
         <div id="groups" class="list"></div>
       </aside>
+
       <main>
         <canvas id="treemap"></canvas>
         <div id="empty" class="empty">Loading report...</div>
+        <div id="tooltip" class="tooltip hidden"></div>
       </main>
+
       <section>
-        <h2>Symbol</h2>
-        <div id="details" class="muted">Select a rectangle.</div>
+        <div class="panelHeader">
+          <h2>Symbol</h2>
+        </div>
+        <div id="details" class="detail muted">Select a rectangle.</div>
       </section>
+
       <footer id="status">Loading...</footer>
     </div>
+
     <script>
-      const state = { report: null, filtered: [], rects: [], selected: null };
+      const state = { report: null, filtered: [], rects: [], selected: null, hovered: null, group: null };
       const canvas = document.getElementById("treemap");
       const ctx = canvas.getContext("2d");
       const search = document.getElementById("search");
@@ -140,6 +510,9 @@
       const details = document.getElementById("details");
       const status = document.getElementById("status");
       const groups = document.getElementById("groups");
+      const clearGroup = document.getElementById("clearGroup");
+      const summaryChips = document.getElementById("summaryChips");
+      const tooltip = document.getElementById("tooltip");
 
       fetch("/report.json").then(r => r.json()).then(report => {
         state.report = report;
@@ -152,38 +525,99 @@
       search.addEventListener("input", renderAll);
       metric.addEventListener("change", renderAll);
       confidence.addEventListener("change", renderAll);
+      clearGroup.addEventListener("click", () => {
+        state.group = null;
+        renderAll();
+      });
       window.addEventListener("resize", draw);
+
       canvas.addEventListener("click", event => {
-        const rect = canvas.getBoundingClientRect();
-        const x = (event.clientX - rect.left) * devicePixelRatio;
-        const y = (event.clientY - rect.top) * devicePixelRatio;
-        state.selected = state.rects.find(r => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h)?.symbol ?? null;
+        const rect = pickRect(event);
+        state.selected = rect?.symbol ?? null;
         renderDetails();
         draw();
       });
 
+      canvas.addEventListener("mousemove", event => {
+        const rect = pickRect(event);
+        state.hovered = rect?.symbol ?? null;
+        if (rect) {
+          tooltip.classList.remove("hidden");
+          tooltip.style.left = `${event.offsetX}px`;
+          tooltip.style.top = `${event.offsetY}px`;
+          tooltip.innerHTML = `
+            <strong>${escapeHtml(rect.symbol.demangled)}</strong>
+            <span>${escapeHtml(metricLabel(metric.value))}: ${formatBytes(metricValue(rect.symbol))}</span>
+          `;
+        } else {
+          tooltip.classList.add("hidden");
+        }
+        draw();
+      });
+
+      canvas.addEventListener("mouseleave", () => {
+        state.hovered = null;
+        tooltip.classList.add("hidden");
+        draw();
+      });
+
       function renderAll() {
-        const q = search.value.toLowerCase();
+        if (!state.report) return;
+        const q = search.value.trim().toLowerCase();
         const confidenceMode = confidence.value;
-        state.filtered = state.report.symbols.filter(symbol => {
-          const matches = !q || symbol.demangled.toLowerCase().includes(q) || symbol.name.toLowerCase().includes(q);
-          const known = symbol.own_frame.bytes != null;
-          const confidenceOk = confidenceMode === "all" || (confidenceMode === "known" && known) || (confidenceMode === "unknown" && !known);
-          return matches && confidenceOk;
-        });
+        const groupIds = state.group ? new Set(state.group.symbol_ids) : null;
+        state.filtered = state.report.symbols
+          .filter(symbol => {
+            const haystack = `${symbol.demangled} ${symbol.name} ${symbol.crate_name ?? ""} ${symbol.module_path?.join("::") ?? ""}`.toLowerCase();
+            const matches = !q || haystack.includes(q);
+            const known = symbol.own_frame.bytes != null;
+            const confidenceOk = confidenceMode === "all" || (confidenceMode === "known" && known) || (confidenceMode === "unknown" && !known);
+            const groupOk = !groupIds || groupIds.has(symbol.id);
+            return matches && confidenceOk && groupOk;
+          })
+          .sort((left, right) => symbolRank(left) - symbolRank(right) || metricValue(right) - metricValue(left));
+        renderSummary();
         renderGroups();
         renderDetails();
         draw();
+        empty.textContent = state.filtered.length ? "" : "No symbols match the current filters.";
         empty.style.display = state.filtered.length ? "none" : "grid";
-        status.textContent = `${state.report.artifact.file_name} | ${state.report.summary.symbol_count} symbols | ${state.report.summary.known_frame_count} known frames | ${state.report.summary.unknown_frame_count} unknown`;
+        status.textContent = `${state.report.artifact.file_name} | ${state.report.summary.symbol_count} symbols | ${state.report.summary.known_frame_count} known frames | ${state.report.summary.unknown_frame_count} unknown | ${state.report.summary.confidence} confidence`;
+      }
+
+      function renderSummary() {
+        const summary = state.report.summary;
+        summaryChips.innerHTML = [
+          ["Symbols", summary.symbol_count],
+          ["Known", summary.known_frame_count],
+          ["Unknown", summary.unknown_frame_count],
+          ["Edges", summary.edge_count],
+          ["Filtered", state.filtered.length],
+        ].map(([label, value]) => `<span class="chip">${label}<strong>${formatNumber(value)}</strong></span>`).join("");
       }
 
       function renderGroups() {
         groups.innerHTML = "";
-        for (const group of state.report.groups.slice(0, 80)) {
-          const el = document.createElement("div");
-          el.className = "row";
-          el.innerHTML = `<strong>${escapeHtml(group.name)}</strong><span class="muted">${group.symbol_ids.length} symbols</span>`;
+        const ordered = [...state.report.groups].sort((left, right) => {
+          const leftValue = left.own_frame_sum ?? left.worst_path_max ?? 0;
+          const rightValue = right.own_frame_sum ?? right.worst_path_max ?? 0;
+          return rightValue - leftValue || left.name.localeCompare(right.name);
+        });
+
+        for (const group of ordered.slice(0, 120)) {
+          const el = document.createElement("button");
+          el.type = "button";
+          el.className = `row${state.group?.id === group.id ? " active" : ""}`;
+          el.innerHTML = `
+            <strong>${escapeHtml(group.name)}</strong>
+            <span class="rowMeta">
+              <span>${group.symbol_ids.length} symbols</span>
+              <span>${formatBytes(group.own_frame_sum ?? group.worst_path_max)}</span>
+            </span>`;
+          el.addEventListener("click", () => {
+            state.group = group;
+            renderAll();
+          });
           groups.appendChild(el);
         }
       }
@@ -191,44 +625,91 @@
       function renderDetails() {
         const symbol = state.selected;
         if (!symbol) {
+          details.className = "detail muted";
           details.textContent = "Select a rectangle.";
           return;
         }
+        details.className = "detail";
         details.innerHTML = `
-          <div class="row">
-            <strong>${escapeHtml(symbol.demangled)}</strong>
-            <p class="muted">${escapeHtml(symbol.name)}</p>
-            <p>Own frame: <span class="metric">${formatBytes(symbol.own_frame.bytes)}</span></p>
-            <p>Worst path: <span class="metric">${formatBytes(symbol.worst_path.bytes)}</span></p>
-            <p>Confidence: ${symbol.confidence}</p>
-            <p>Evidence: ${symbol.evidence.map(e => escapeHtml(e.source)).join(", ")}</p>
-            <p>Unresolved: ${symbol.unresolved_reasons.map(escapeHtml).join(", ") || "none"}</p>
+          <div class="detailCard">
+            <strong class="detailName" title="${escapeHtml(symbol.demangled)}">${escapeHtml(symbol.demangled)}</strong>
+            <code>${escapeHtml(symbol.name)}</code>
+            <dl>
+              <dt>Own frame</dt><dd>${formatBytes(symbol.own_frame.bytes)}</dd>
+              <dt>Worst path</dt><dd>${formatBytes(symbol.worst_path.bytes)}</dd>
+              <dt>Code size</dt><dd>${formatBytes(symbol.size_bytes)}</dd>
+              <dt>Address</dt><dd>0x${Number(symbol.address).toString(16)}</dd>
+              <dt>Status</dt><dd>${escapeHtml(symbol.worst_path.status)}</dd>
+              <dt>Confidence</dt><dd>${escapeHtml(symbol.confidence)}</dd>
+            </dl>
+            <div class="pillRow">
+              ${symbol.evidence.map(e => `<span class="pill">${escapeHtml(e.source)}:${escapeHtml(e.confidence)}</span>`).join("")}
+              ${(symbol.unresolved_reasons.length ? symbol.unresolved_reasons : ["no unresolved reasons"]).map(item => `<span class="pill">${escapeHtml(item)}</span>`).join("")}
+            </div>
           </div>`;
       }
 
       function draw() {
         const bounds = canvas.getBoundingClientRect();
-        canvas.width = Math.max(1, Math.floor(bounds.width * devicePixelRatio));
-        canvas.height = Math.max(1, Math.floor(bounds.height * devicePixelRatio));
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        state.rects = squarify(state.filtered.map(symbol => ({ symbol, value: metricValue(symbol) })).filter(item => item.value > 0), 0, 0, canvas.width, canvas.height);
+        const ratio = window.devicePixelRatio || 1;
+        canvas.width = Math.max(1, Math.floor(bounds.width * ratio));
+        canvas.height = Math.max(1, Math.floor(bounds.height * ratio));
+
+        drawBackground();
+        state.rects = squarify(state.filtered.map(symbol => ({ symbol, value: metricValue(symbol) })).filter(item => item.value > 0), 10 * ratio, 10 * ratio, canvas.width - 20 * ratio, canvas.height - 20 * ratio);
         for (const rect of state.rects) {
           ctx.fillStyle = colorFor(rect.symbol);
-          ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-          ctx.strokeStyle = "rgba(255,255,255,0.8)";
-          ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
-          if (rect.symbol === state.selected) {
-            ctx.strokeStyle = "#111827";
-            ctx.lineWidth = 3;
-            ctx.strokeRect(rect.x + 2, rect.y + 2, rect.w - 4, rect.h - 4);
-            ctx.lineWidth = 1;
+          roundRect(ctx, rect.x, rect.y, rect.w, rect.h, Math.min(5 * ratio, rect.w / 5, rect.h / 5));
+          ctx.fill();
+          ctx.strokeStyle = "rgba(255,255,255,0.74)";
+          ctx.lineWidth = Math.max(1, ratio);
+          ctx.stroke();
+
+          if (rect.symbol === state.selected || rect.symbol === state.hovered) {
+            ctx.strokeStyle = rect.symbol === state.selected ? "#101828" : "rgba(16,24,40,0.62)";
+            ctx.lineWidth = rect.symbol === state.selected ? 3 * ratio : 2 * ratio;
+            roundRect(ctx, rect.x + 2 * ratio, rect.y + 2 * ratio, rect.w - 4 * ratio, rect.h - 4 * ratio, Math.min(4 * ratio, rect.w / 6, rect.h / 6));
+            ctx.stroke();
           }
-          if (rect.w > 70 && rect.h > 28) {
-            ctx.fillStyle = "#111827";
-            ctx.font = `${12 * devicePixelRatio}px system-ui`;
-            ctx.fillText(trimMiddle(rect.symbol.demangled, Math.floor(rect.w / (7 * devicePixelRatio))), rect.x + 6, rect.y + 16 * devicePixelRatio);
+
+          if (rect.w > 96 * ratio && rect.h > 32 * ratio) {
+            const label = trimMiddle(rect.symbol.demangled, Math.floor(rect.w / (7 * ratio)));
+            ctx.fillStyle = readableText(colorFor(rect.symbol));
+            ctx.font = `${12 * ratio}px system-ui`;
+            ctx.fillText(label, rect.x + 8 * ratio, rect.y + 19 * ratio);
           }
         }
+      }
+
+      function drawBackground() {
+        const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        gradient.addColorStop(0, "#fbfcfe");
+        gradient.addColorStop(1, "#eef2f6");
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = "rgba(148, 163, 184, 0.18)";
+        ctx.lineWidth = 1;
+        const step = 32 * (window.devicePixelRatio || 1);
+        for (let x = step; x < canvas.width; x += step) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, canvas.height);
+          ctx.stroke();
+        }
+        for (let y = step; y < canvas.height; y += step) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(canvas.width, y);
+          ctx.stroke();
+        }
+      }
+
+      function pickRect(event) {
+        const rect = canvas.getBoundingClientRect();
+        const ratio = window.devicePixelRatio || 1;
+        const x = (event.clientX - rect.left) * ratio;
+        const y = (event.clientY - rect.top) * ratio;
+        return state.rects.find(item => x >= item.x && x <= item.x + item.w && y >= item.y && y <= item.y + item.h);
       }
 
       function metricValue(symbol) {
@@ -240,18 +721,35 @@
         }
       }
 
+      function metricLabel(value) {
+        return { own: "Own frame", worst: "Worst path", code: "Code size", risk: "Risk" }[value] ?? "Metric";
+      }
+
       function colorFor(symbol) {
         if (symbol.own_frame.bytes == null) return "#d97706";
         if (symbol.worst_path.status === "recursive") return "#dc2626";
         if (symbol.confidence === "exact") return "#059669";
         if (symbol.confidence === "high") return "#2563eb";
-        return "#64748b";
+        if (symbol.confidence === "medium") return "#64748b";
+        return "#6d5bd0";
+      }
+
+      function readableText(hex) {
+        const value = hex.replace("#", "");
+        const r = parseInt(value.slice(0, 2), 16);
+        const g = parseInt(value.slice(2, 4), 16);
+        const b = parseInt(value.slice(4, 6), 16);
+        return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? "#101828" : "#ffffff";
+      }
+
+      function symbolRank(symbol) {
+        return /^sub_[0-9a-f]+$/i.test(symbol.demangled) || /^sub_[0-9a-f]+$/i.test(symbol.name) ? 1 : 0;
       }
 
       function squarify(items, x, y, w, h) {
         const total = items.reduce((sum, item) => sum + item.value, 0);
-        if (!total) return [];
-        const sorted = items.sort((a, b) => b.value - a.value).slice(0, 2000);
+        if (!total || w <= 0 || h <= 0) return [];
+        const sorted = items.sort((a, b) => b.value - a.value).slice(0, 2600);
         const rects = [];
         layout(sorted.map(item => ({ ...item, area: item.value / total * w * h })), x, y, w, h, rects);
         return rects;
@@ -271,7 +769,8 @@
         const first = items.slice(0, split);
         const second = items.slice(split);
         const firstArea = first.reduce((sum, item) => sum + item.area, 0);
-        const ratio = firstArea / (firstArea + second.reduce((sum, item) => sum + item.area, 0));
+        const totalArea = firstArea + second.reduce((sum, item) => sum + item.area, 0);
+        const ratio = totalArea ? firstArea / totalArea : 0.5;
         if (horizontal) {
           const ww = w * ratio;
           layout(first, x, y, ww, h, out);
@@ -283,8 +782,27 @@
         }
       }
 
+      function roundRect(context, x, y, w, h, r) {
+        const radius = Math.max(0, Math.min(r, w / 2, h / 2));
+        context.beginPath();
+        context.moveTo(x + radius, y);
+        context.lineTo(x + w - radius, y);
+        context.quadraticCurveTo(x + w, y, x + w, y + radius);
+        context.lineTo(x + w, y + h - radius);
+        context.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+        context.lineTo(x + radius, y + h);
+        context.quadraticCurveTo(x, y + h, x, y + h - radius);
+        context.lineTo(x, y + radius);
+        context.quadraticCurveTo(x, y, x + radius, y);
+        context.closePath();
+      }
+
       function formatBytes(value) {
-        return value == null ? "unknown" : `${value} B`;
+        return value == null ? "unknown" : `${formatNumber(value)} B`;
+      }
+
+      function formatNumber(value) {
+        return Number(value).toLocaleString();
       }
 
       function trimMiddle(text, max) {

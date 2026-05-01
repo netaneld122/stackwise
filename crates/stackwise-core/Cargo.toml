@@ -10,6 +10,7 @@ rust-version.workspace = true
 camino.workspace = true
 memmap2.workspace = true
 object.workspace = true
+pdb.workspace = true
 rayon.workspace = true
 rustc-demangle.workspace = true
 schemars.workspace = true

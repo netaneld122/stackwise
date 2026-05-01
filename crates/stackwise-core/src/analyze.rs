@@ -7,6 +7,7 @@ use rayon::prelude::*;
 
 use crate::elf_stack_sizes;
 use crate::graph::compute_worst_paths;
+use crate::pdb_symbols;
 use crate::pe_unwind;
 use crate::symbol_names::{crate_and_module, demangle};
 use crate::{
@@ -50,15 +51,23 @@ pub fn analyze_artifact(
         });
     }
 
-    if file.symbols().next().is_none() {
+    let pdb_symbols = load_debug_symbols(artifact_path, &file, format, &mut diagnostics);
+    let has_object_symbols = file.symbols().next().is_some();
+    if !has_object_symbols && pdb_symbols.is_empty() {
         diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Warning,
             code: "stackwise.stripped_symbols".to_owned(),
-            message: "The artifact has no regular symbol table; try an unstripped artifact for useful symbol names.".to_owned(),
+            message: "The artifact has no regular symbol table and no adjacent PDB symbols were found; try an unstripped artifact for useful symbol names.".to_owned(),
+        });
+    } else if !has_object_symbols {
+        diagnostics.push(Diagnostic {
+            level: DiagnosticLevel::Info,
+            code: "stackwise.pdb_fallback_symbols".to_owned(),
+            message: "The artifact has no regular symbol table; using adjacent PDB symbols for names and PE unwind ranges for frames.".to_owned(),
         });
     }
 
-    let mut symbols = collect_symbols(&file, format, &frame_sources);
+    let mut symbols = collect_symbols(&file, format, &frame_sources, &pdb_symbols);
     let edges = collect_edges(&file, &symbols);
     compute_worst_paths(&mut symbols, &edges);
     let groups = build_groups(&symbols);
@@ -88,6 +97,40 @@ pub fn analyze_artifact(
         groups,
         diagnostics,
     })
+}
+
+fn load_debug_symbols(
+    artifact_path: &Utf8Path,
+    file: &object::File<'_>,
+    format: ObjectFormat,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Vec<pdb_symbols::PdbSymbol> {
+    if format != ObjectFormat::PeCoff {
+        return Vec::new();
+    }
+
+    match pdb_symbols::load_pdb_symbols(artifact_path, file) {
+        Ok(Some(symbols)) => {
+            diagnostics.push(Diagnostic {
+                level: DiagnosticLevel::Info,
+                code: "stackwise.pdb_symbols".to_owned(),
+                message: format!(
+                    "Loaded {} function symbols from adjacent PDB.",
+                    symbols.len()
+                ),
+            });
+            symbols
+        }
+        Ok(None) => Vec::new(),
+        Err(error) => {
+            diagnostics.push(Diagnostic {
+                level: DiagnosticLevel::Warning,
+                code: "stackwise.pdb_symbols_failed".to_owned(),
+                message: error.to_string(),
+            });
+            Vec::new()
+        }
+    }
 }
 
 fn frame_sources(file: &object::File<'_>, format: ObjectFormat) -> BTreeMap<u64, FrameRecord> {
@@ -133,39 +176,57 @@ fn collect_symbols(
     file: &object::File<'_>,
     format: ObjectFormat,
     frames: &BTreeMap<u64, FrameRecord>,
+    debug_symbols: &[pdb_symbols::PdbSymbol],
 ) -> Vec<SymbolReport> {
-    let mut raw = file
+    let mut raw_by_address = BTreeMap::<u64, RawSymbol>::new();
+
+    for symbol in file
         .symbols()
         .filter(|symbol| symbol.is_definition())
         .filter(|symbol| symbol.kind() == SymbolKind::Text)
         .filter(|symbol| symbol.address() != 0 || symbol.size() != 0)
         .filter(|symbol| !symbol.name().unwrap_or_default().is_empty())
-        .map(|symbol| RawSymbol {
-            name: symbol.name().unwrap_or_default().to_owned(),
-            address: symbol.address(),
-            size: symbol.size(),
-        })
-        .collect::<Vec<_>>();
+    {
+        raw_by_address
+            .entry(symbol.address())
+            .or_insert_with(|| RawSymbol {
+                name: symbol.name().unwrap_or_default().to_owned(),
+                address: symbol.address(),
+                size: symbol.size(),
+            });
+    }
 
-    raw.sort_by(|left, right| {
-        left.address
-            .cmp(&right.address)
-            .then_with(|| left.name.cmp(&right.name))
-    });
-    raw.dedup_by(|left, right| left.address == right.address && left.name == right.name);
+    for symbol in debug_symbols {
+        raw_by_address.insert(
+            symbol.address,
+            RawSymbol {
+                name: symbol.name.clone(),
+                address: symbol.address,
+                size: symbol.size,
+            },
+        );
+    }
 
-    if raw.is_empty() {
-        raw = frames
-            .iter()
-            .map(|(address, frame)| RawSymbol {
-                name: format!("sub_{address:016x}"),
-                address: *address,
-                size: frame
-                    .end
-                    .and_then(|end| end.checked_sub(*address))
-                    .unwrap_or_default(),
-            })
-            .collect();
+    for (address, frame) in frames {
+        raw_by_address.entry(*address).or_insert_with(|| RawSymbol {
+            name: format!("sub_{address:016x}"),
+            address: *address,
+            size: frame
+                .end
+                .and_then(|end| end.checked_sub(*address))
+                .unwrap_or_default(),
+        });
+    }
+
+    let mut raw = raw_by_address.into_values().collect::<Vec<_>>();
+    for symbol in &mut raw {
+        if symbol.size == 0 {
+            symbol.size = frames
+                .get(&symbol.address)
+                .and_then(|frame| frame.end)
+                .and_then(|end| end.checked_sub(symbol.address))
+                .unwrap_or_default();
+        }
     }
 
     raw.into_par_iter()

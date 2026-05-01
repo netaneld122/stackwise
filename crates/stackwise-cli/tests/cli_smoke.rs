@@ -47,5 +47,15 @@ fn cargo_subcommand_analyzes_fixture_project() {
 
     assert!(report.summary.symbol_count > 0);
     #[cfg(windows)]
-    assert!(report.summary.known_frame_count > 0);
+    {
+        assert!(report.summary.known_frame_count > 0);
+        assert!(report
+            .symbols
+            .iter()
+            .any(|symbol| symbol.demangled.contains("stackwise_simple_std::main")));
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "stackwise.pdb_symbols"));
+    }
 }

@@ -1,6 +1,7 @@
 mod analyze;
 mod elf_stack_sizes;
 mod graph;
+mod pdb_symbols;
 mod pe_unwind;
 mod report;
 mod symbol_names;

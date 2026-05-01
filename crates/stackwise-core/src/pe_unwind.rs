@@ -21,7 +21,7 @@ pub fn parse_pe_x64_unwind<'data>(file: &object::File<'data>) -> Vec<PeUnwindRec
         return Vec::new();
     };
 
-    let image_base = infer_image_base(file, pdata_bytes).unwrap_or_default();
+    let image_base = file.relative_address_base();
     let sections = file
         .sections()
         .filter_map(|section| {
@@ -54,15 +54,8 @@ pub fn parse_pe_x64_unwind<'data>(file: &object::File<'data>) -> Vec<PeUnwindRec
     frames
 }
 
-fn infer_image_base<'data>(file: &object::File<'data>, pdata_bytes: &[u8]) -> Option<u64> {
-    let first_begin = pdata_bytes.get(0..12).map(|chunk| read_u32(chunk, 0))?;
-    let text_address = file
-        .sections()
-        .filter(|section| section.kind() == object::SectionKind::Text)
-        .map(|section| section.address())
-        .min()?;
-
-    text_address.checked_sub(first_begin)
+pub fn infer_pe_image_base<'data>(file: &object::File<'data>) -> Option<u64> {
+    Some(file.relative_address_base())
 }
 
 fn section_tail<'a>(rva: u64, sections: &'a [SectionRange<'a>]) -> Option<&'a [u8]> {

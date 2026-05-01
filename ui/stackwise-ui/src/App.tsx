@@ -49,21 +49,29 @@ function ReportView({ report }: { report: StackwiseReport }) {
       status={status}
       toolbar={
         <>
-          <div className="searchBox">
-            <Search size={16} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search symbols" />
+          <div className="summaryChips">
+            <span className="chip">Symbols <strong>{report.summary.symbol_count.toLocaleString()}</strong></span>
+            <span className="chip">Known <strong>{report.summary.known_frame_count.toLocaleString()}</strong></span>
+            <span className="chip">Unknown <strong>{report.summary.unknown_frame_count.toLocaleString()}</strong></span>
+            <span className="chip">Confidence <strong>{report.summary.confidence}</strong></span>
           </div>
-          <select value={metric} onChange={(event) => setMetric(event.target.value as Metric)}>
-            <option value="own">Own frame</option>
-            <option value="worst">Worst path</option>
-            <option value="code">Code size</option>
-            <option value="risk">Unresolved risk</option>
-          </select>
-          <select value={confidence} onChange={(event) => setConfidence(event.target.value as ConfidenceFilter)}>
-            <option value="all">All confidence</option>
-            <option value="known">Known frames</option>
-            <option value="unknown">Unknown only</option>
-          </select>
+          <div className="controls">
+            <div className="searchBox">
+              <Search size={16} />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Symbol, crate, module" />
+            </div>
+            <select value={metric} onChange={(event) => setMetric(event.target.value as Metric)}>
+              <option value="own">Own frame</option>
+              <option value="worst">Worst path</option>
+              <option value="code">Code size</option>
+              <option value="risk">Unresolved risk</option>
+            </select>
+            <select value={confidence} onChange={(event) => setConfidence(event.target.value as ConfidenceFilter)}>
+              <option value="all">All confidence</option>
+              <option value="known">Known frames</option>
+              <option value="unknown">Unknown only</option>
+            </select>
+          </div>
         </>
       }
       left={<ModuleList report={report} />}
@@ -90,7 +98,10 @@ function Shell({
   return (
     <div className="app">
       <header>
-        <h1>Stackwise</h1>
+        <div className="brand">
+          <div className="mark" aria-hidden="true" />
+          <h1>Stackwise</h1>
+        </div>
         {toolbar}
       </header>
       <aside>{left}</aside>
@@ -148,7 +159,7 @@ function Details({ symbol }: { symbol: SymbolReport | null }) {
     <>
       <h2>Symbol</h2>
       <div className="detailCard">
-        <strong>{symbol.demangled}</strong>
+        <strong className="detailName" title={symbol.demangled}>{symbol.demangled}</strong>
         <code>{symbol.name}</code>
         <dl>
           <dt>Own frame</dt>
@@ -164,6 +175,14 @@ function Details({ symbol }: { symbol: SymbolReport | null }) {
           <dt>Unresolved</dt>
           <dd>{symbol.unresolved_reasons.join(", ") || "none"}</dd>
         </dl>
+        <div className="pillRow">
+          {symbol.evidence.map((item) => (
+            <span className="pill" key={`${item.source}-${item.confidence}`}>{item.source}:{item.confidence}</span>
+          ))}
+          {(symbol.unresolved_reasons.length ? symbol.unresolved_reasons : ["no unresolved reasons"]).map((item) => (
+            <span className="pill" key={item}>{item}</span>
+          ))}
+        </div>
         <button type="button" disabled>
           <SquareArrowOutUpRight size={15} /> Open source
         </button>
@@ -203,9 +222,10 @@ function TreemapCanvas({
 
       for (const rect of rects) {
         context.fillStyle = confidenceColor(rect.symbol);
-        context.fillRect(rect.x, rect.y, rect.width, rect.height);
+        roundRect(context, rect.x, rect.y, rect.width, rect.height, Math.min(5 * ratio, rect.width / 5, rect.height / 5));
+        context.fill();
         context.strokeStyle = "rgba(255,255,255,0.82)";
-        context.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.width - 1, rect.height - 1);
+        context.stroke();
 
         if (rect.symbol.id === selectedId) {
           context.strokeStyle = "#111827";
@@ -254,4 +274,26 @@ function trim(text: string, max: number): string {
   if (text.length <= max) return text;
   if (max < 8) return text.slice(0, max);
   return `${text.slice(0, max - 3)}...`;
+}
+
+function roundRect(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+) {
+  const safeRadius = Math.max(0, Math.min(radius, width / 2, height / 2));
+  context.beginPath();
+  context.moveTo(x + safeRadius, y);
+  context.lineTo(x + width - safeRadius, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
+  context.lineTo(x + width, y + height - safeRadius);
+  context.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
+  context.lineTo(x + safeRadius, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
+  context.lineTo(x, y + safeRadius);
+  context.quadraticCurveTo(x, y, x + safeRadius, y);
+  context.closePath();
 }
