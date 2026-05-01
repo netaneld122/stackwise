@@ -1,6 +1,8 @@
 use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::OnceLock;
 use std::thread;
 
 use anyhow::Context;
@@ -97,7 +99,21 @@ fn symbol_context_response(
     let disassembly = disassemble_symbol(symbol, &report);
     let mut messages = Vec::new();
     if source.is_none() {
-        messages.push("No source location was available for this symbol.".to_owned());
+        match &symbol.source_location {
+            Some(location) => {
+                let mut message = format!(
+                    "Source location was recorded as {}, but Stackwise could not read the file.",
+                    location.file
+                );
+                if rust_library_relative_path(&location.file).is_some() {
+                    message.push_str(
+                        " Install or update local Rust sources with `rustup component add rust-src` for the active toolchain.",
+                    );
+                }
+                messages.push(message);
+            }
+            None => messages.push("No source location was available for this symbol.".to_owned()),
+        }
     }
     if disassembly.is_none() {
         messages.push("Disassembly was unavailable for this symbol or architecture.".to_owned());
@@ -181,6 +197,10 @@ fn resolve_source_path(location: &SourceLocation, report: &StackwiseReport) -> O
         return Some(raw);
     }
 
+    if let Some(path) = resolve_rust_std_source_path(&location.file) {
+        return Some(path);
+    }
+
     let workspace_root = report
         .build
         .as_ref()
@@ -196,6 +216,126 @@ fn resolve_source_path(location: &SourceLocation, report: &StackwiseReport) -> O
     let artifact_parent = Path::new(&report.artifact.path).parent()?;
     let candidate = artifact_parent.join(&location.file);
     candidate.is_file().then_some(candidate)
+}
+
+fn resolve_rust_std_source_path(file: &str) -> Option<PathBuf> {
+    resolve_rust_std_source_path_with_roots(file, rust_src_roots().iter().cloned())
+}
+
+fn resolve_rust_std_source_path_with_roots<I>(file: &str, roots: I) -> Option<PathBuf>
+where
+    I: IntoIterator<Item = PathBuf>,
+{
+    let relative = rust_library_relative_path(file)?;
+    roots
+        .into_iter()
+        .map(|root| root.join(&relative))
+        .find(|candidate| candidate.is_file())
+}
+
+fn rust_library_relative_path(file: &str) -> Option<PathBuf> {
+    let normalized = file.replace('\\', "/");
+    if !(normalized.starts_with("/rustc/")
+        || normalized.starts_with("rustc/")
+        || normalized.contains(":/rustc/"))
+    {
+        return None;
+    }
+    let (_, suffix) = normalized.split_once("/library/")?;
+    let mut relative = PathBuf::new();
+    for part in suffix.split('/') {
+        if part.is_empty() || part == "." || part == ".." {
+            return None;
+        }
+        relative.push(part);
+    }
+    (!relative.as_os_str().is_empty()).then_some(relative)
+}
+
+fn rust_src_roots() -> &'static [PathBuf] {
+    static ROOTS: OnceLock<Vec<PathBuf>> = OnceLock::new();
+    ROOTS.get_or_init(|| {
+        let mut roots = Vec::new();
+        if let Some(sysroot) = rustc_sysroot() {
+            push_unique(
+                &mut roots,
+                sysroot
+                    .join("lib")
+                    .join("rustlib")
+                    .join("src")
+                    .join("rust")
+                    .join("library"),
+            );
+        }
+
+        if let Some(rustup_home) = rustup_home() {
+            let toolchains = rustup_home.join("toolchains");
+            if let Ok(toolchain) = std::env::var("RUSTUP_TOOLCHAIN") {
+                push_unique(
+                    &mut roots,
+                    toolchains
+                        .join(toolchain)
+                        .join("lib")
+                        .join("rustlib")
+                        .join("src")
+                        .join("rust")
+                        .join("library"),
+                );
+            }
+            if let Ok(entries) = fs::read_dir(toolchains) {
+                for entry in entries.flatten() {
+                    let Ok(file_type) = entry.file_type() else {
+                        continue;
+                    };
+                    if file_type.is_dir() {
+                        push_unique(
+                            &mut roots,
+                            entry
+                                .path()
+                                .join("lib")
+                                .join("rustlib")
+                                .join("src")
+                                .join("rust")
+                                .join("library"),
+                        );
+                    }
+                }
+            }
+        }
+
+        roots
+    })
+}
+
+fn push_unique(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
+}
+
+fn rustc_sysroot() -> Option<PathBuf> {
+    static SYSROOT: OnceLock<Option<PathBuf>> = OnceLock::new();
+    SYSROOT
+        .get_or_init(|| {
+            let output = Command::new("rustc")
+                .args(["--print", "sysroot"])
+                .output()
+                .ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            let text = String::from_utf8(output.stdout).ok()?;
+            let path = PathBuf::from(text.trim());
+            (!path.as_os_str().is_empty()).then_some(path)
+        })
+        .clone()
+}
+
+fn rustup_home() -> Option<PathBuf> {
+    std::env::var_os("RUSTUP_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join(".rustup")))
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".rustup")))
 }
 
 fn source_language(path: &Path) -> String {
@@ -357,3 +497,62 @@ fn content_type(value: &str) -> Header {
 }
 
 const INDEX_HTML: &str = include_str!("../assets/index.html");
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_rust_std_source_path_with_roots, rust_library_relative_path};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn detects_mixed_separator_rustc_library_paths() {
+        let relative =
+            rust_library_relative_path("/rustc/abc123/library\\std\\src\\sys\\backtrace.rs")
+                .expect("rustc remapped path should be detected");
+
+        assert_eq!(
+            relative,
+            PathBuf::from("std")
+                .join("src")
+                .join("sys")
+                .join("backtrace.rs")
+        );
+    }
+
+    #[test]
+    fn rejects_rustc_library_path_traversal() {
+        assert!(rust_library_relative_path("/rustc/abc123/library/../secret.rs").is_none());
+    }
+
+    #[test]
+    fn ignores_non_rustc_library_paths() {
+        assert!(rust_library_relative_path("vendor/library/std/src/rt.rs").is_none());
+    }
+
+    #[test]
+    fn resolves_rustc_library_paths_to_local_rust_src() {
+        let root = unique_temp_dir();
+        let source = root.join("std").join("src").join("rt.rs");
+        fs::create_dir_all(source.parent().expect("source has parent"))
+            .expect("test source parent is created");
+        fs::write(&source, "fn handle_rt_panic() {}\n").expect("test source is written");
+
+        let resolved = resolve_rust_std_source_path_with_roots(
+            "/rustc/abc123/library\\std\\src\\rt.rs",
+            [root.clone()],
+        )
+        .expect("rust-src path should resolve");
+
+        assert_eq!(resolved, source);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn unique_temp_dir() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("stackwise-rust-src-test-{nanos}"))
+    }
+}
