@@ -740,6 +740,26 @@ dd {
   display: none;
 }
 
+.callGraphMiniMap {
+  overflow: hidden;
+  border: 1px solid rgba(196, 207, 220, 0.92);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.14);
+}
+
+.callGraphMiniMap .react-flow__minimap-svg {
+  display: block;
+}
+
+.callGraphMiniMap .react-flow__minimap-node {
+  filter: drop-shadow(0 8px 12px rgba(15, 23, 42, 0.13));
+}
+
+.callGraphMiniMap .react-flow__minimap-node.root {
+  stroke-width: 4px;
+}
+
 .callNode {
   position: relative;
   overflow: hidden;

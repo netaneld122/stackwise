@@ -982,7 +982,28 @@ function CallGraphView({
       >
         <Background color="#dce5ee" gap={22} />
         <FlowControls showInteractive={false} />
-        {nodes.length > 8 ? <MiniMap pannable zoomable nodeStrokeWidth={2} /> : null}
+        {nodes.length > 8 ? (
+          <MiniMap<StackwiseFlowNode>
+            ariaLabel="Call graph minimap"
+            className="callGraphMiniMap"
+            nodeColor={(node) => node.data.color}
+            nodeStrokeColor={(node) => (node.data.selected ? "#111827" : "rgba(100, 116, 139, 0.46)")}
+            nodeClassName={(node) => `miniNode ${node.data.graphNode.relation}`}
+            nodeBorderRadius={7}
+            nodeStrokeWidth={2}
+            bgColor="rgba(255, 255, 255, 0.94)"
+            maskColor="rgba(15, 23, 42, 0.12)"
+            maskStrokeColor="#0f766e"
+            maskStrokeWidth={2}
+            offsetScale={18}
+            pannable
+            style={{ width: 176, height: 124 }}
+            onNodeClick={(_, node) => {
+              const graphNode = node.data.graphNode;
+              if ("symbol" in graphNode) setSelectedId(graphNode.symbol.id);
+            }}
+          />
+        ) : null}
       </ReactFlow>
     </div>
   );
@@ -1055,12 +1076,16 @@ function layoutFlowGraph(
         x: (point?.x ?? 0) - size.width / 2,
         y: (point?.y ?? 0) - size.height / 2,
       },
+      width: size.width,
+      height: size.height,
+      measured: size,
       data: {
         graphNode,
         color: symbol ? groupColor(symbol, report) : "#64748b",
         layout,
         selected: symbol?.id === selectedId,
       },
+      selected: symbol?.id === selectedId,
       draggable: false,
     };
   });

@@ -119,3 +119,75 @@ test("renders the application shell", async ({ page }) => {
   await expect(page.getByText("Cumulative").first()).toBeVisible();
   await expect(page.getByText("+24 B")).toBeVisible();
 });
+
+test("renders call graph minimap nodes for larger reports", async ({ page }) => {
+  const symbols = Array.from({ length: 12 }, (_, id) => ({
+    id,
+    name: `demo::f${id}`,
+    demangled: id === 0 ? "demo::main" : `demo::f${id}`,
+    crate_name: "demo",
+    module_path: ["demo"],
+    address: id + 1,
+    size_bytes: 10,
+    own_frame: { bytes: 8 + id, status: "known", evidence_source: "elf_stack_sizes" },
+    worst_path: { bytes: 8 + id, status: "known", path: [id] },
+    confidence: "exact",
+    evidence: [],
+    unresolved_reasons: [],
+  }));
+  const edges = symbols.slice(1).map((symbol) => ({
+    caller: 0,
+    callee: symbol.id,
+    target_address: symbol.address,
+    kind: "direct_call",
+    confidence: "medium",
+  }));
+
+  await page.route("/report.json", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        schema_version: "0.1.0",
+        generator: { name: "stackwise", version: "0.1.0" },
+        artifact: {
+          path: "demo",
+          file_name: "demo",
+          format: "elf",
+          architecture: "x86_64",
+          pointer_width: 64,
+          size_bytes: 100,
+        },
+        summary: {
+          symbol_count: symbols.length,
+          edge_count: edges.length,
+          known_frame_count: symbols.length,
+          unknown_frame_count: 0,
+          recursive_symbol_count: 0,
+          indirect_edge_count: 0,
+          max_own_frame: { symbol_id: 11, bytes: 19, demangled: "demo::f11" },
+          max_worst_path: { symbol_id: 0, bytes: 162, demangled: "demo::main" },
+          confidence: "exact",
+        },
+        symbols,
+        edges,
+        groups: [
+          {
+            id: 0,
+            name: "demo",
+            parent: null,
+            symbol_ids: symbols.map((symbol) => symbol.id),
+            own_frame_sum: 162,
+            worst_path_max: 19,
+          },
+        ],
+        diagnostics: [],
+      }),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Call Graph" }).click();
+  await expect(page.locator(".callGraphMiniMap")).toBeVisible();
+  await expect(page.locator(".callGraphMiniMap title")).toHaveText("Call graph minimap");
+  await expect.poll(async () => page.locator(".callGraphMiniMap .react-flow__minimap-node").count()).toBeGreaterThan(8);
+});
