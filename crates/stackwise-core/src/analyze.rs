@@ -421,13 +421,22 @@ fn resolve_symbol(address: Option<u64>, ranges: &[(u64, u64, u32)]) -> Option<u3
 fn build_groups(symbols: &[SymbolReport]) -> Vec<GroupReport> {
     let mut by_name: BTreeMap<String, Vec<u32>> = BTreeMap::new();
     for symbol in symbols {
-        let group = if symbol.module_path.is_empty() {
+        let module_path = symbol
+            .module_path
+            .iter()
+            .map(|part| part.trim())
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        let group = if module_path.is_empty() {
             symbol
                 .crate_name
-                .clone()
-                .unwrap_or_else(|| "(unknown)".to_owned())
+                .as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .unwrap_or("(unknown)")
+                .to_owned()
         } else {
-            symbol.module_path.join("::")
+            module_path.join("::")
         };
         by_name.entry(group).or_default().push(symbol.id);
     }

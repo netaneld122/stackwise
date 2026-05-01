@@ -1101,7 +1101,8 @@ function modulePartsForGroup(groupName: string, symbolIds: number[], report: Sta
   if (fromGroup.length > 0) return fromGroup;
 
   const firstSymbol = report.symbols[symbolIds[0]];
-  if (firstSymbol?.module_path.length) return firstSymbol.module_path;
+  const fromSymbol = firstSymbol?.module_path.map((part) => part.trim()).filter(Boolean) ?? [];
+  if (fromSymbol.length) return fromSymbol;
   const crate = firstSymbol ? symbolCrate(firstSymbol) : null;
   return [crate ?? "unknown"];
 }
