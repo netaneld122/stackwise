@@ -768,10 +768,6 @@ dd {
   outline-offset: 2px;
 }
 
-.symbolNode.unknown {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.94));
-}
-
 .nodeTopline,
 .nodeMetrics {
   display: flex;
@@ -780,29 +776,15 @@ dd {
   gap: 7px;
 }
 
-.nodeRelation,
-.nodeStatus {
+.nodeRelation {
   border-radius: 999px;
   padding: 2px 7px;
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-}
-
-.nodeRelation {
   background: #edf2f7;
   color: #475467;
-}
-
-.nodeStatus.known {
-  background: #eef8f6;
-  color: #0f766e;
-}
-
-.nodeStatus.unknown {
-  background: #fff1f2;
-  color: #be123c;
 }
 
 .symbolNode strong {

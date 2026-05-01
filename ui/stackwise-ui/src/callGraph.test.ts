@@ -63,6 +63,28 @@ describe("call graph helpers", () => {
     expect(graph.edges[0].addedStackBytes).toBe(32);
   });
 
+  it("counts unknown frames as zero in cumulative graph totals", () => {
+    const symbols = [symbol(0, "demo::main", 16), symbol(1, "demo::unknown", null), symbol(2, "demo::leaf", 64)];
+    const report = reportWith(symbols, [edge(0, 1, "direct_call"), edge(1, 2, "tail_call")]);
+
+    const graph = buildFocusedCallGraph(report, symbols, {
+      rootId: 0,
+      callerDepth: 0,
+      calleeDepth: 2,
+      maxNodes: 20,
+      edgeKinds: allEdges,
+    });
+
+    const unknown = graph.nodes.find((node) => node.id === "s:1");
+    const leaf = graph.nodes.find((node) => node.id === "s:2");
+    const directEdge = graph.edges.find((edge) => edge.kind === "direct_call");
+    const tailEdge = graph.edges.find((edge) => edge.kind === "tail_call");
+    expect(unknown && "cumulativeStackBytes" in unknown ? unknown.cumulativeStackBytes : null).toBe(16);
+    expect(leaf && "cumulativeStackBytes" in leaf ? leaf.cumulativeStackBytes : null).toBe(80);
+    expect(directEdge?.addedStackBytes).toBe(0);
+    expect(tailEdge?.addedStackBytes).toBe(64);
+  });
+
   it("labels nested tail-call deltas from cumulative stack growth", () => {
     const symbols = [
       symbol(0, "demo::main", 16),

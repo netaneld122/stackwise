@@ -146,7 +146,7 @@ export function buildFocusedCallGraph(
   const stackById = computeCumulativeStacks(rootId, nodeIds, relationById, depthById, index, options.edgeKinds);
   const nodes: GraphNode[] = [...nodeIds].map((id) => {
     const symbol = index.byId.get(id)!;
-    const stack = stackById.get(id) ?? { bytes: null, status: "unknown" as GraphStackStatus };
+    const stack = stackById.get(id) ?? { bytes: 0, status: "known" as GraphStackStatus };
     return {
       id: symbolNodeId(id),
       symbol,
@@ -276,7 +276,7 @@ function computeCumulativeStacks(
 
 function ownStack(symbol: SymbolReport): { bytes: number | null; status: GraphStackStatus } {
   return symbol.own_frame.bytes == null
-    ? { bytes: null, status: "unknown" }
+    ? { bytes: 0, status: "known" }
     : { bytes: symbol.own_frame.bytes, status: "known" };
 }
 
@@ -286,17 +286,15 @@ function combineStacks(
   calleeOwn: { bytes: number | null; status: GraphStackStatus },
   kind: EdgeKind,
 ): { bytes: number | null; status: GraphStackStatus } {
-  if (active.bytes == null || calleeOwn.bytes == null) return { bytes: null, status: "unknown" };
   if (kind === "tail_call") {
-    if (callerOwn.bytes == null) return { bytes: null, status: "unknown" };
     return {
-      bytes: active.bytes - callerOwn.bytes + Math.max(callerOwn.bytes, calleeOwn.bytes),
+      bytes: (active.bytes ?? 0) - (callerOwn.bytes ?? 0) + Math.max(callerOwn.bytes ?? 0, calleeOwn.bytes ?? 0),
       status: "known",
     };
   }
 
   return {
-    bytes: active.bytes + calleeOwn.bytes,
+    bytes: (active.bytes ?? 0) + (calleeOwn.bytes ?? 0),
     status: "known",
   };
 }
@@ -324,25 +322,22 @@ function withStackDelta(
 
   const target = index.byId.get(targetId);
   const targetOwn = target ? ownStack(target) : { bytes: null, status: "unknown" as GraphStackStatus };
-  if (targetOwn.bytes == null) return edge;
 
   if (edge.kind === "tail_call") {
     const sourceStack = sourceId == null ? null : stacks.get(sourceId);
     const targetStack = stacks.get(targetId);
-    const added = sourceStack?.bytes == null || targetStack?.bytes == null
-      ? null
-      : Math.max(0, targetStack.bytes - sourceStack.bytes);
+    const added = Math.max(0, (targetStack?.bytes ?? 0) - (sourceStack?.bytes ?? 0));
     return {
       ...edge,
       addedStackBytes: added,
-      addedStackStatus: added == null ? "unknown" : "known",
+      addedStackStatus: "known",
     };
   }
 
   if (edge.kind === "direct_call") {
     return {
       ...edge,
-      addedStackBytes: targetOwn.bytes,
+      addedStackBytes: targetOwn.bytes ?? 0,
       addedStackStatus: "known",
     };
   }

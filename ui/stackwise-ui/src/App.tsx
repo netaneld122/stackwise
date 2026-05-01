@@ -995,11 +995,9 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
   }
 
   const symbol = node.symbol;
-  const ownKnown = symbol.own_frame.bytes != null;
-  const worstKnown = symbol.worst_path.bytes != null;
   return (
     <div
-      className={`callNode symbolNode ${node.relation}${data.selected ? " selected" : ""}${node.cumulativeStackStatus === "unknown" ? " unknown" : ""}`}
+      className={`callNode symbolNode ${node.relation}${data.selected ? " selected" : ""}`}
       style={{ "--node-color": data.color } as CSSProperties}
       title={symbol.demangled}
     >
@@ -1007,14 +1005,13 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
       <Handle type="source" position={handles.source} />
       <div className="nodeTopline">
         <span className="nodeRelation">{node.relation}</span>
-        <span className={`nodeStatus ${ownKnown ? "known" : "unknown"}`}>{ownKnown ? "known" : "unknown"}</span>
       </div>
       <strong>{shortSymbolName(symbol.demangled)}</strong>
       <span className="nodeModule">{symbolCrate(symbol) ?? "unknown crate"}</span>
       <div className="nodeMetrics">
         <span><b>Own</b>{formatBytes(symbol.own_frame.bytes)}</span>
         <span><b>Cumulative</b>{formatBytes(node.cumulativeStackBytes)}</span>
-        <span><b>Worst</b>{worstKnown ? formatBytes(symbol.worst_path.bytes) : symbol.worst_path.status}</span>
+        <span><b>Worst</b>{formatBytes(symbol.worst_path.bytes)}</span>
       </div>
     </div>
   );

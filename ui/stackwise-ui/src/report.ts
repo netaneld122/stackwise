@@ -249,7 +249,7 @@ export function symbolCrate(symbol: SymbolReport): string | null {
 }
 
 export function formatBytes(value?: number | null): string {
-  return value == null ? "unknown" : `${value.toLocaleString()} B`;
+  return `${(value ?? 0).toLocaleString()} B`;
 }
 
 function primaryModuleName(symbol: SymbolReport, crate: string): string {
