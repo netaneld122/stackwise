@@ -410,6 +410,7 @@ function ModuleList({
   expandedModules: Set<string>;
   setExpandedModules: Dispatch<SetStateAction<Set<string>>>;
 }) {
+  const lastClickedModuleKey = useRef<string | null>(null);
   const activeSymbolIds = useMemo(
     () => symbolIdsForModules(moduleTree, includedModules),
     [moduleTree, includedModules],
@@ -428,8 +429,15 @@ function ModuleList({
     });
   };
 
-  const toggleSelected = (node: ModuleNode) => {
-    setIncludedModules((current) => toggleModuleSelection(moduleTree, node, current));
+  const toggleSelected = (node: ModuleNode, shiftKey = false) => {
+    const anchorKey = lastClickedModuleKey.current;
+    setIncludedModules((current) => {
+      if (shiftKey && anchorKey) {
+        return setModuleRangeSelection(moduleTree, visibleNodes, anchorKey, node, current);
+      }
+      return toggleModuleSelection(moduleTree, node, current);
+    });
+    lastClickedModuleKey.current = node.key;
   };
 
   return (
@@ -452,11 +460,11 @@ function ModuleList({
               key={node.key}
               role="button"
               tabIndex={0}
-              onClick={() => toggleSelected(node)}
+              onClick={(event) => toggleSelected(node, event.shiftKey)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
-                  toggleSelected(node);
+                  toggleSelected(node, event.shiftKey);
                 }
               }}
             >
@@ -480,8 +488,7 @@ function ModuleList({
                   }}
                   type="checkbox"
                   checked={selection === "checked"}
-                  onClick={(event) => event.stopPropagation()}
-                  onChange={() => toggleSelected(node)}
+                  readOnly
                 />
                 <span className="moduleTitle" title={node.path}>
                   <span className="swatch" style={{ background: node.color }} />
@@ -1281,6 +1288,33 @@ function toggleModuleSelection(
     if (wasChecked) next.delete(key);
     else next.add(key);
   }
+  return next.size === tree.allKeys.length ? null : next;
+}
+
+function setModuleRangeSelection(
+  tree: ModuleTree,
+  visibleNodes: ModuleNode[],
+  fromKey: string,
+  toNode: ModuleNode,
+  current: Set<string> | null,
+): Set<string> | null {
+  const fromIndex = visibleNodes.findIndex((node) => node.key === fromKey);
+  const toIndex = visibleNodes.findIndex((node) => node.key === toNode.key);
+  if (fromIndex < 0 || toIndex < 0) return toggleModuleSelection(tree, toNode, current);
+
+  const activeSymbolIds = symbolIdsForModules(tree, current);
+  const shouldSelect = moduleSelectionState(toNode, activeSymbolIds) !== "checked";
+  const next = current ? new Set(current) : new Set(tree.allKeys);
+  const start = Math.min(fromIndex, toIndex);
+  const end = Math.max(fromIndex, toIndex);
+
+  for (const node of visibleNodes.slice(start, end + 1)) {
+    for (const key of moduleKeys(node)) {
+      if (shouldSelect) next.add(key);
+      else next.delete(key);
+    }
+  }
+
   return next.size === tree.allKeys.length ? null : next;
 }
 
