@@ -5,12 +5,14 @@ use camino::{Utf8Path, Utf8PathBuf};
 use pdb::{FallibleIterator, SymbolData, PDB};
 
 use crate::pe_unwind;
+use crate::SourceLocation;
 
 #[derive(Debug, Clone)]
 pub struct PdbSymbol {
     pub name: String,
     pub address: u64,
     pub size: u64,
+    pub source_location: Option<SourceLocation>,
 }
 
 pub fn load_pdb_symbols(
@@ -36,10 +38,17 @@ pub fn load_pdb_symbols(
         path: pdb_path.clone(),
         message: source.to_string(),
     })?;
+    let string_table = pdb.string_table().ok();
 
     let mut symbols = BTreeMap::<u64, PdbSymbol>::new();
     collect_global_symbols(&mut pdb, image_base, &address_map, &mut symbols)?;
-    collect_module_symbols(&mut pdb, image_base, &address_map, &mut symbols)?;
+    collect_module_symbols(
+        &mut pdb,
+        image_base,
+        &address_map,
+        string_table.as_ref(),
+        &mut symbols,
+    )?;
 
     Ok(Some(symbols.into_values().collect()))
 }
@@ -73,6 +82,7 @@ fn collect_global_symbols<'s, S: pdb::Source<'s> + 's>(
             name: public.name.to_string().into_owned(),
             address,
             size: 0,
+            source_location: None,
         });
     }
 
@@ -83,6 +93,7 @@ fn collect_module_symbols<'s, S: pdb::Source<'s> + 's>(
     pdb: &mut PDB<'s, S>,
     image_base: u64,
     address_map: &pdb::AddressMap<'_>,
+    string_table: Option<&pdb::StringTable<'_>>,
     symbols: &mut BTreeMap<u64, PdbSymbol>,
 ) -> Result<(), PdbSymbolError> {
     let dbi = pdb
@@ -102,6 +113,7 @@ fn collect_module_symbols<'s, S: pdb::Source<'s> + 's>(
         else {
             continue;
         };
+        let line_program = info.line_program().ok();
         let mut iter = info
             .symbols()
             .map_err(|source| PdbSymbolError::ReadSymbols(source.to_string()))?;
@@ -123,12 +135,53 @@ fn collect_module_symbols<'s, S: pdb::Source<'s> + 's>(
                     name: procedure.name.to_string().into_owned(),
                     address,
                     size: u64::from(procedure.len),
+                    source_location: source_location_for_procedure(
+                        line_program.as_ref(),
+                        string_table,
+                        address_map,
+                        procedure.offset,
+                    ),
                 },
             );
         }
     }
 
     Ok(())
+}
+
+fn source_location_for_procedure(
+    line_program: Option<&pdb::LineProgram<'_>>,
+    string_table: Option<&pdb::StringTable<'_>>,
+    address_map: &pdb::AddressMap<'_>,
+    offset: pdb::PdbInternalSectionOffset,
+) -> Option<SourceLocation> {
+    let line_program = line_program?;
+    let string_table = string_table?;
+    let mut lines = line_program.lines_for_symbol(offset);
+    let mut best = None;
+
+    while let Some(line) = lines.next().ok()? {
+        let rva = line.offset.to_rva(address_map)?;
+        let file_info = line_program.get_file_info(line.file_index).ok()?;
+        let file = file_info
+            .name
+            .to_string_lossy(string_table)
+            .ok()?
+            .into_owned();
+        let candidate = (rva.0, file, line.line_start, line.column_start);
+        if best
+            .as_ref()
+            .is_none_or(|(best_rva, _, _, _)| candidate.0 < *best_rva)
+        {
+            best = Some(candidate);
+        }
+    }
+
+    best.map(|(_, file, line, column)| SourceLocation {
+        file,
+        line: Some(line),
+        column,
+    })
 }
 
 fn find_adjacent_pdb(artifact_path: &Utf8Path) -> Option<Utf8PathBuf> {

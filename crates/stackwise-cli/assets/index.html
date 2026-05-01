@@ -31,7 +31,7 @@
 
       .app {
         display: grid;
-        grid-template-columns: 300px minmax(420px, 1fr) 380px;
+        grid-template-columns: 320px minmax(440px, 1fr) 520px;
         grid-template-rows: 72px minmax(0, 1fr) 36px;
         gap: 10px;
         height: 100vh;
@@ -204,9 +204,29 @@
         white-space: nowrap;
       }
 
+      .infoDot {
+        display: inline-grid;
+        width: 16px;
+        height: 16px;
+        place-items: center;
+        border-radius: 50%;
+        background: #eef2f7;
+        color: #667085;
+        font-size: 11px;
+        font-weight: 700;
+      }
+
       .chip strong {
+        overflow: hidden;
+        text-overflow: ellipsis;
         color: var(--ink);
         font-variant-numeric: tabular-nums;
+      }
+
+      .appChip {
+        border-color: rgba(15, 118, 110, 0.28);
+        background: #eef8f6;
+        color: #0f766e;
       }
 
       .searchBox {
@@ -259,6 +279,13 @@
         transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
       }
 
+      .row input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        flex: 0 0 auto;
+        accent-color: var(--accent);
+      }
+
       .row:hover,
       .row.active {
         border-color: rgba(15, 118, 110, 0.45);
@@ -272,6 +299,25 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+
+      .rowTitle {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .rowTitle strong {
+        min-width: 0;
+      }
+
+      .swatch {
+        width: 10px;
+        height: 10px;
+        flex: 0 0 auto;
+        border-radius: 3px;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.46);
       }
 
       .rowMeta,
@@ -305,6 +351,118 @@
         display: flex;
         flex-direction: column;
         gap: 12px;
+      }
+
+      .codePanel {
+        display: flex;
+        min-height: 260px;
+        flex-direction: column;
+        gap: 10px;
+        border-top: 1px solid var(--line);
+        padding-top: 12px;
+      }
+
+      .codeHeader {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .sourceLink {
+        min-width: 0;
+        overflow: hidden;
+        color: #0f766e;
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .codeGrid {
+        display: grid;
+        min-height: 0;
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+
+      .codeBlock {
+        min-height: 120px;
+        max-height: 320px;
+        overflow: auto;
+        border: 1px solid #dfe6ee;
+        border-radius: 8px;
+        background: #10151f;
+        color: #d7dde8;
+        font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .codeTitle {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 7px 9px;
+        color: #9fb0c9;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .codeLine {
+        display: grid;
+        grid-template-columns: 46px minmax(0, 1fr);
+        gap: 10px;
+        padding: 0 10px;
+        white-space: pre;
+      }
+
+      .asmLine {
+        grid-template-columns: 92px 120px minmax(0, 1fr);
+      }
+
+      .codeLine.highlight {
+        background: rgba(20, 184, 166, 0.16);
+      }
+
+      .lineNo,
+      .address,
+      .bytes {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: #74839a;
+        user-select: none;
+      }
+
+      .tok-key,
+      .asm-op {
+        color: #73daca;
+      }
+
+      .tok-type,
+      .asm-reg {
+        color: #8ab4ff;
+      }
+
+      .tok-macro,
+      .asm-num {
+        color: #e9c46a;
+      }
+
+      .tok-comment {
+        color: #6f7f96;
+      }
+
+      .contextMessage {
+        border: 1px solid #e7edf4;
+        border-radius: 8px;
+        padding: 9px;
+        background: #f8fafc;
+        color: var(--muted);
+        font-size: 12px;
       }
 
       .detailName {
@@ -478,7 +636,7 @@
       <aside>
         <div class="panelHeader">
           <h2>Modules</h2>
-          <button id="clearGroup" type="button">All</button>
+          <button id="clearGroup" type="button">Show all</button>
         </div>
         <div id="groups" class="list"></div>
       </aside>
@@ -500,7 +658,18 @@
     </div>
 
     <script>
-      const state = { report: null, filtered: [], rects: [], selected: null, hovered: null, group: null };
+      const state = {
+        report: null,
+        filtered: [],
+        rects: [],
+        groupRects: [],
+        selected: null,
+        hovered: null,
+        includedGroups: null,
+        context: null,
+        contextLoading: false,
+        contextSymbolId: null,
+      };
       const canvas = document.getElementById("treemap");
       const ctx = canvas.getContext("2d");
       const search = document.getElementById("search");
@@ -526,7 +695,7 @@
       metric.addEventListener("change", renderAll);
       confidence.addEventListener("change", renderAll);
       clearGroup.addEventListener("click", () => {
-        state.group = null;
+        state.includedGroups = null;
         renderAll();
       });
       window.addEventListener("resize", draw);
@@ -534,6 +703,7 @@
       canvas.addEventListener("click", event => {
         const rect = pickRect(event);
         state.selected = rect?.symbol ?? null;
+        loadSymbolContext();
         renderDetails();
         draw();
       });
@@ -565,7 +735,7 @@
         if (!state.report) return;
         const q = search.value.trim().toLowerCase();
         const confidenceMode = confidence.value;
-        const groupIds = state.group ? new Set(state.group.symbol_ids) : null;
+        const groupIds = includedSymbolIds();
         state.filtered = state.report.symbols
           .filter(symbol => {
             const haystack = `${symbol.demangled} ${symbol.name} ${symbol.crate_name ?? ""} ${symbol.module_path?.join("::") ?? ""}`.toLowerCase();
@@ -587,39 +757,82 @@
 
       function renderSummary() {
         const summary = state.report.summary;
-        summaryChips.innerHTML = [
-          ["Symbols", summary.symbol_count],
-          ["Known", summary.known_frame_count],
-          ["Unknown", summary.unknown_frame_count],
-          ["Edges", summary.edge_count],
-          ["Filtered", state.filtered.length],
-        ].map(([label, value]) => `<span class="chip">${label}<strong>${formatNumber(value)}</strong></span>`).join("");
+        const primary = primaryCrateName(state.report);
+        const chips = [
+          ...(primary ? [["App", primary, "The crate/package Stackwise believes this analysis was run for. It is prioritized in the treemap and module list."]] : []),
+          ["Symbols", summary.symbol_count, "Functions/symbols Stackwise found in the final artifact."],
+          ["Known", summary.known_frame_count, "Symbols where Stackwise found stack frame evidence. Known does not always mean exact; check confidence and evidence."],
+          ["Unknown", summary.unknown_frame_count, "Symbols with no usable stack frame evidence. They are never counted as zero."],
+          ["Edges", summary.edge_count, "Resolved call graph edges recovered from direct calls and tail calls in machine code."],
+          ["Filtered", state.filtered.length, "Symbols currently visible after search, confidence, and module filters."],
+        ];
+        summaryChips.innerHTML = chips.map(([label, value, help]) => {
+          const className = label === "App" ? "chip appChip" : "chip";
+          const display = typeof value === "number" ? formatNumber(value) : escapeHtml(value);
+          return `<span class="${className}" title="${escapeHtml(help)}">${label}<strong>${display}</strong><span class="infoDot">?</span></span>`;
+        }).join("");
       }
 
       function renderGroups() {
         groups.innerHTML = "";
         const ordered = [...state.report.groups].sort((left, right) => {
+          const leftSymbol = state.report.symbols[left.symbol_ids[0]];
+          const rightSymbol = state.report.symbols[right.symbol_ids[0]];
+          const leftPriority = leftSymbol ? groupPriority(leftSymbol, state.report) : 3;
+          const rightPriority = rightSymbol ? groupPriority(rightSymbol, state.report) : 3;
           const leftValue = left.own_frame_sum ?? left.worst_path_max ?? 0;
           const rightValue = right.own_frame_sum ?? right.worst_path_max ?? 0;
-          return rightValue - leftValue || left.name.localeCompare(right.name);
+          return leftPriority - rightPriority || rightValue - leftValue || left.name.localeCompare(right.name);
         });
 
         for (const group of ordered.slice(0, 120)) {
-          const el = document.createElement("button");
-          el.type = "button";
-          el.className = `row${state.group?.id === group.id ? " active" : ""}`;
+          const el = document.createElement("label");
+          const firstSymbol = state.report.symbols[group.symbol_ids[0]];
+          const color = firstSymbol ? groupColor(firstSymbol, state.report) : "#94a3b8";
+          const checked = groupIncluded(group.id);
+          el.className = `row${checked ? " active" : ""}`;
           el.innerHTML = `
-            <strong>${escapeHtml(group.name)}</strong>
+            <span class="rowTitle">
+              <input type="checkbox" ${checked ? "checked" : ""} data-group-id="${group.id}" />
+              <span class="swatch" style="background:${color}"></span>
+              <strong>${escapeHtml(group.name)}</strong>
+            </span>
             <span class="rowMeta">
               <span>${group.symbol_ids.length} symbols</span>
               <span>${formatBytes(group.own_frame_sum ?? group.worst_path_max)}</span>
             </span>`;
-          el.addEventListener("click", () => {
-            state.group = group;
+          el.querySelector("input").addEventListener("change", () => {
+            toggleGroup(group.id);
             renderAll();
           });
           groups.appendChild(el);
         }
+      }
+
+      function groupIncluded(groupId) {
+        return !state.includedGroups || state.includedGroups.has(groupId);
+      }
+
+      function toggleGroup(groupId) {
+        const allIds = state.report.groups.map(group => group.id);
+        const included = state.includedGroups ? new Set(state.includedGroups) : new Set(allIds);
+        if (included.has(groupId)) {
+          included.delete(groupId);
+        } else {
+          included.add(groupId);
+        }
+        state.includedGroups = included.size === allIds.length ? null : included;
+      }
+
+      function includedSymbolIds() {
+        if (!state.includedGroups) return null;
+        const symbolIds = new Set();
+        for (const group of state.report.groups) {
+          if (state.includedGroups.has(group.id)) {
+            for (const symbolId of group.symbol_ids) symbolIds.add(symbolId);
+          }
+        }
+        return symbolIds;
       }
 
       function renderDetails() {
@@ -636,6 +849,7 @@
             <code>${escapeHtml(symbol.name)}</code>
             <dl>
               <dt>Own frame</dt><dd>${formatBytes(symbol.own_frame.bytes)}</dd>
+              <dt>Crate</dt><dd>${escapeHtml(symbolCrate(symbol) ?? "unknown")}</dd>
               <dt>Worst path</dt><dd>${formatBytes(symbol.worst_path.bytes)}</dd>
               <dt>Code size</dt><dd>${formatBytes(symbol.size_bytes)}</dd>
               <dt>Address</dt><dd>0x${Number(symbol.address).toString(16)}</dd>
@@ -646,6 +860,82 @@
               ${symbol.evidence.map(e => `<span class="pill">${escapeHtml(e.source)}:${escapeHtml(e.confidence)}</span>`).join("")}
               ${(symbol.unresolved_reasons.length ? symbol.unresolved_reasons : ["no unresolved reasons"]).map(item => `<span class="pill">${escapeHtml(item)}</span>`).join("")}
             </div>
+          </div>
+          ${renderSymbolContext(symbol)}`;
+      }
+
+      function loadSymbolContext() {
+        const symbol = state.selected;
+        state.context = null;
+        state.contextSymbolId = symbol?.id ?? null;
+        state.contextLoading = Boolean(symbol);
+        if (!symbol) return;
+
+        fetch(`/api/symbol-context?id=${encodeURIComponent(symbol.id)}`)
+          .then(response => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
+          .then(context => {
+            if (state.contextSymbolId !== symbol.id) return;
+            state.context = context;
+            state.contextLoading = false;
+            renderDetails();
+          })
+          .catch(error => {
+            if (state.contextSymbolId !== symbol.id) return;
+            state.context = { source: null, disassembly: null, messages: [`Context unavailable: ${error}`] };
+            state.contextLoading = false;
+            renderDetails();
+          });
+      }
+
+      function renderSymbolContext(symbol) {
+        if (state.contextLoading) {
+          return `<div class="codePanel"><div class="contextMessage">Loading source and disassembly...</div></div>`;
+        }
+        const context = state.contextSymbolId === symbol.id ? state.context : null;
+        if (!context) {
+          return `<div class="codePanel"><div class="contextMessage">Select a symbol to load source and disassembly.</div></div>`;
+        }
+        const source = renderSourceBlock(context.source);
+        const asm = renderDisassemblyBlock(context.disassembly);
+        const messages = (context.messages ?? []).map(message => `<div class="contextMessage">${escapeHtml(message)}</div>`).join("");
+        return `
+          <div class="codePanel">
+            <div class="codeHeader">
+              <h2>Side View</h2>
+              ${context.source ? `<a class="sourceLink" href="${sourceHref(context.source)}" target="_blank" title="${escapeHtml(context.source.file)}">${escapeHtml(context.source.file)}:${context.source.line ?? ""}</a>` : `<span class="muted">No source link</span>`}
+            </div>
+            <div class="codeGrid">
+              ${source}
+              ${asm}
+              ${messages}
+            </div>
+          </div>`;
+      }
+
+      function renderSourceBlock(source) {
+        if (!source) return "";
+        return `
+          <div class="codeBlock">
+            <div class="codeTitle"><span>Implementation</span><span>${escapeHtml(source.language)}</span></div>
+            ${source.lines.map(line => `
+              <div class="codeLine${line.highlight ? " highlight" : ""}">
+                <span class="lineNo">${line.number}</span>
+                <span>${highlightSource(line.text, source.language)}</span>
+              </div>`).join("")}
+          </div>`;
+      }
+
+      function renderDisassemblyBlock(disassembly) {
+        if (!disassembly) return "";
+        return `
+          <div class="codeBlock">
+            <div class="codeTitle"><span>Disassembly</span><span>${escapeHtml(disassembly.architecture)} / ${escapeHtml(disassembly.syntax)}</span></div>
+            ${disassembly.instructions.map(line => `
+              <div class="codeLine asmLine">
+                <span class="address">${escapeHtml(line.address)}</span>
+                <span class="bytes">${escapeHtml(line.bytes)}</span>
+                <span>${highlightAsm(line.text)}</span>
+              </div>`).join("")}
           </div>`;
       }
 
@@ -656,9 +946,12 @@
         canvas.height = Math.max(1, Math.floor(bounds.height * ratio));
 
         drawBackground();
-        state.rects = squarify(state.filtered.map(symbol => ({ symbol, value: metricValue(symbol) })).filter(item => item.value > 0), 10 * ratio, 10 * ratio, canvas.width - 20 * ratio, canvas.height - 20 * ratio);
+        const layoutResult = groupedTreemap(state.filtered, 10 * ratio, 10 * ratio, canvas.width - 20 * ratio, canvas.height - 20 * ratio);
+        state.groupRects = layoutResult.groups;
+        state.rects = layoutResult.symbols;
         for (const rect of state.rects) {
-          ctx.fillStyle = colorFor(rect.symbol);
+          const fill = groupColor(rect.symbol, state.report);
+          ctx.fillStyle = rectGradient(rect, fill);
           roundRect(ctx, rect.x, rect.y, rect.w, rect.h, Math.min(5 * ratio, rect.w / 5, rect.h / 5));
           ctx.fill();
           ctx.strokeStyle = "rgba(255,255,255,0.74)";
@@ -674,11 +967,12 @@
 
           if (rect.w > 96 * ratio && rect.h > 32 * ratio) {
             const label = trimMiddle(rect.symbol.demangled, Math.floor(rect.w / (7 * ratio)));
-            ctx.fillStyle = readableText(colorFor(rect.symbol));
+            ctx.fillStyle = readableText(fill);
             ctx.font = `${12 * ratio}px system-ui`;
             ctx.fillText(label, rect.x + 8 * ratio, rect.y + 19 * ratio);
           }
         }
+        drawGroupBoundaries(ratio);
       }
 
       function drawBackground() {
@@ -725,13 +1019,88 @@
         return { own: "Own frame", worst: "Worst path", code: "Code size", risk: "Risk" }[value] ?? "Metric";
       }
 
-      function colorFor(symbol) {
-        if (symbol.own_frame.bytes == null) return "#d97706";
-        if (symbol.worst_path.status === "recursive") return "#dc2626";
-        if (symbol.confidence === "exact") return "#059669";
-        if (symbol.confidence === "high") return "#2563eb";
-        if (symbol.confidence === "medium") return "#64748b";
-        return "#6d5bd0";
+      const STD_COLORS = {
+        std: "#4667d8",
+        core: "#6f55c9",
+        alloc: "#d18a00",
+        panic_unwind: "#c2410c",
+        panic_abort: "#c2410c",
+        compiler_builtins: "#64748b",
+        unwind: "#64748b",
+        test: "#0d9488",
+      };
+      const PRIMARY_MODULE_COLORS = ["#008f7a", "#159947", "#007fb8", "#c2417a", "#b45309", "#6d5bd0", "#0d9488", "#b91c1c"];
+      const CRATE_COLORS = ["#2563eb", "#d97706", "#7c3aed", "#059669", "#dc2626", "#0284c7", "#be123c", "#65a30d", "#9333ea", "#0d9488", "#ca8a04", "#4f46e5"];
+
+      function groupColor(symbol, report) {
+        const crate = symbolCrate(symbol);
+        if (!crate || isSyntheticCrate(crate)) return "#94a3b8";
+        const primary = primaryCrateName(report);
+        if (primary && crate === primary) {
+          return PRIMARY_MODULE_COLORS[hashString(primaryModuleName(symbol, crate)) % PRIMARY_MODULE_COLORS.length];
+        }
+        if (STD_COLORS[crate]) return STD_COLORS[crate];
+        return CRATE_COLORS[hashString(crate) % CRATE_COLORS.length];
+      }
+
+      function groupPriority(symbol, report) {
+        const crate = symbolCrate(symbol);
+        if (!crate || isSyntheticCrate(crate)) return 3;
+        const primary = primaryCrateName(report);
+        if (primary && crate === primary) return 0;
+        if (isRuntimeCrate(crate)) return 1;
+        return 2;
+      }
+
+      function treemapGroupName(symbol, report) {
+        const crate = symbolCrate(symbol);
+        if (!crate || isSyntheticCrate(crate)) return "unknown symbols";
+        const primary = primaryCrateName(report);
+        if (primary && crate === primary) return primaryModuleName(symbol, crate);
+        return crate;
+      }
+
+      function primaryCrateName(report) {
+        const crates = new Set(report.symbols.map(symbol => normalizeCrate(symbol.crate_name)).filter(Boolean));
+        const artifactStem = report.artifact.file_name.replace(/\.[^.]+$/, "");
+        const candidates = [report.build?.package, artifactStem, artifactStem.replace(/^lib/, "")];
+        for (const candidate of candidates) {
+          const normalized = normalizeCrate(candidate);
+          if (normalized && crates.has(normalized)) return normalized;
+        }
+        return [...crates].find(crate => !isRuntimeCrate(crate) && !isSyntheticCrate(crate)) ?? null;
+      }
+
+      function primaryModuleName(symbol, crate) {
+        const path = (symbol.module_path ?? []).map(part => normalizeCrate(part) ?? part).filter(Boolean);
+        const withoutCrate = path[0] === crate ? path.slice(1) : path;
+        return withoutCrate[0] ? `${crate}::${withoutCrate[0]}` : crate;
+      }
+
+      function symbolCrate(symbol) {
+        return normalizeCrate(symbol.crate_name ?? symbol.demangled.split("::")[0] ?? null);
+      }
+
+      function normalizeCrate(value) {
+        const normalized = String(value ?? "").trim().replace(/-/g, "_");
+        return normalized || null;
+      }
+
+      function isRuntimeCrate(crate) {
+        return Object.prototype.hasOwnProperty.call(STD_COLORS, crate) || crate === "__rustc";
+      }
+
+      function isSyntheticCrate(crate) {
+        return /^sub_[0-9a-f]+$/i.test(crate);
+      }
+
+      function hashString(value) {
+        let hash = 2166136261;
+        for (let index = 0; index < value.length; index += 1) {
+          hash ^= value.charCodeAt(index);
+          hash = Math.imul(hash, 16777619);
+        }
+        return hash >>> 0;
       }
 
       function readableText(hex) {
@@ -742,14 +1111,93 @@
         return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? "#101828" : "#ffffff";
       }
 
+      function rectGradient(rect, base) {
+        const gradient = ctx.createLinearGradient(rect.x, rect.y, rect.x + rect.w, rect.y + rect.h);
+        gradient.addColorStop(0, mixColor(base, "#ffffff", 0.18));
+        gradient.addColorStop(0.55, base);
+        gradient.addColorStop(1, mixColor(base, "#000000", 0.16));
+        return gradient;
+      }
+
+      function mixColor(left, right, amount) {
+        const a = hexRgb(left);
+        const b = hexRgb(right);
+        return `rgb(${Math.round(a.r + (b.r - a.r) * amount)}, ${Math.round(a.g + (b.g - a.g) * amount)}, ${Math.round(a.b + (b.b - a.b) * amount)})`;
+      }
+
+      function hexRgb(hex) {
+        const value = hex.replace("#", "");
+        return {
+          r: parseInt(value.slice(0, 2), 16),
+          g: parseInt(value.slice(2, 4), 16),
+          b: parseInt(value.slice(4, 6), 16),
+        };
+      }
+
       function symbolRank(symbol) {
         return /^sub_[0-9a-f]+$/i.test(symbol.demangled) || /^sub_[0-9a-f]+$/i.test(symbol.name) ? 1 : 0;
       }
 
-      function squarify(items, x, y, w, h) {
+      function groupedTreemap(symbols, x, y, w, h) {
+        const groups = new Map();
+        for (const symbol of symbols) {
+          const value = metricValue(symbol);
+          if (value <= 0) continue;
+          const key = treemapGroupName(symbol, state.report);
+          const group = groups.get(key) ?? { key, value: 0, priority: groupPriority(symbol, state.report), symbols: [] };
+          group.value += value;
+          group.symbols.push({ symbol, value });
+          groups.set(key, group);
+        }
+
+        const groupRects = squarify([...groups.values()], x, y, w, h, 260);
+        const symbolRects = [];
+        for (const groupRect of groupRects) {
+          const pad = Math.min(7, Math.max(2, Math.min(groupRect.w, groupRect.h) * 0.015));
+          const innerX = groupRect.x + pad;
+          const innerY = groupRect.y + pad;
+          const innerW = Math.max(0, groupRect.w - pad * 2);
+          const innerH = Math.max(0, groupRect.h - pad * 2);
+          symbolRects.push(...squarify(groupRect.item.symbols, innerX, innerY, innerW, innerH, 2600).map(rect => ({
+            x: rect.x,
+            y: rect.y,
+            w: rect.w,
+            h: rect.h,
+            symbol: rect.item.symbol,
+          })));
+        }
+
+        return {
+          groups: groupRects.map(rect => ({ x: rect.x, y: rect.y, w: rect.w, h: rect.h, key: rect.item.key })),
+          symbols: symbolRects,
+        };
+      }
+
+      function drawGroupBoundaries(ratio) {
+        for (const rect of state.groupRects) {
+          if (rect.w <= 0 || rect.h <= 0) continue;
+          ctx.strokeStyle = "rgba(16, 24, 40, 0.22)";
+          ctx.lineWidth = Math.max(1, ratio);
+          roundRect(ctx, rect.x, rect.y, rect.w, rect.h, Math.min(8 * ratio, rect.w / 6, rect.h / 6));
+          ctx.stroke();
+
+          if (rect.w > 150 * ratio && rect.h > 56 * ratio) {
+            const label = trimMiddle(rect.key, Math.floor(rect.w / (7 * ratio)));
+            ctx.font = `600 ${12 * ratio}px system-ui`;
+            const labelWidth = ctx.measureText(label).width + 16 * ratio;
+            ctx.fillStyle = "rgba(255, 255, 255, 0.82)";
+            roundRect(ctx, rect.x + 7 * ratio, rect.y + 7 * ratio, Math.min(labelWidth, rect.w - 14 * ratio), 24 * ratio, 6 * ratio);
+            ctx.fill();
+            ctx.fillStyle = "rgba(16, 24, 40, 0.78)";
+            ctx.fillText(label, rect.x + 15 * ratio, rect.y + 23 * ratio);
+          }
+        }
+      }
+
+      function squarify(items, x, y, w, h, limit) {
         const total = items.reduce((sum, item) => sum + item.value, 0);
         if (!total || w <= 0 || h <= 0) return [];
-        const sorted = items.sort((a, b) => b.value - a.value).slice(0, 2600);
+        const sorted = items.sort((a, b) => (a.priority ?? 10) - (b.priority ?? 10) || b.value - a.value).slice(0, limit);
         const rects = [];
         layout(sorted.map(item => ({ ...item, area: item.value / total * w * h })), x, y, w, h, rects);
         return rects;
@@ -758,7 +1206,7 @@
       function layout(items, x, y, w, h, out) {
         if (!items.length || w <= 0 || h <= 0) return;
         if (items.length === 1) {
-          out.push({ x, y, w, h, symbol: items[0].symbol });
+          out.push({ x, y, w, h, item: items[0] });
           return;
         }
         const horizontal = w >= h;
@@ -809,6 +1257,30 @@
         if (text.length <= max) return text;
         if (max < 8) return text.slice(0, max);
         return `${text.slice(0, max - 4)}...`;
+      }
+
+      function sourceHref(source) {
+        const normalized = source.file.replace(/\\/g, "/");
+        const prefix = /^[a-zA-Z]:\//.test(normalized) ? "/" : "";
+        return `file://${prefix}${encodeURI(normalized)}${source.line ? `#L${source.line}` : ""}`;
+      }
+
+      function highlightSource(text, language) {
+        let escaped = escapeHtml(text);
+        if (language !== "rust") return escaped;
+        escaped = escaped.replace(/(\/\/.*)$/g, '<span class="tok-comment">$1</span>');
+        escaped = escaped.replace(/\b(fn|pub|let|mut|if|else|match|while|for|loop|return|unsafe|extern|impl|trait|struct|enum|use|mod|crate|where|async|await|move|const|static|ref|Self|self)\b/g, '<span class="tok-key">$1</span>');
+        escaped = escaped.replace(/\b([A-Z][A-Za-z0-9_]*|u8|u16|u32|u64|usize|i8|i16|i32|i64|isize|bool|str|String|Option|Result|Vec)\b/g, '<span class="tok-type">$1</span>');
+        escaped = escaped.replace(/([A-Za-z_][A-Za-z0-9_]*!)/g, '<span class="tok-macro">$1</span>');
+        return escaped;
+      }
+
+      function highlightAsm(text) {
+        let escaped = escapeHtml(text);
+        escaped = escaped.replace(/^([a-z][a-z0-9.]*)/i, '<span class="asm-op">$1</span>');
+        escaped = escaped.replace(/\b(r(?:ax|bx|cx|dx|si|di|sp|bp|8|9|1[0-5])[dwb]?|e(?:ax|bx|cx|dx|si|di|sp|bp)|[abcd][lh]|xmm\d+|ymm\d+|rsp|rbp|rip)\b/gi, '<span class="asm-reg">$1</span>');
+        escaped = escaped.replace(/\b(0x[0-9a-f]+|\d+)\b/gi, '<span class="asm-num">$1</span>');
+        return escaped;
       }
 
       function escapeHtml(value) {

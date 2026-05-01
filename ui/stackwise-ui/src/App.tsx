@@ -1,13 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { Search, SquareArrowOutUpRight } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
-  confidenceColor,
   filterSymbols,
   formatBytes,
+  groupColor,
+  groupPriority,
+  primaryCrateName,
+  symbolCrate,
   type ConfidenceFilter,
+  type GroupReport,
   type Metric,
   type StackwiseReport,
+  type SymbolContext,
   type SymbolReport,
 } from "./report";
 import { useStackwiseStore } from "./store";
@@ -37,12 +42,21 @@ export function App() {
 function ReportView({ report }: { report: StackwiseReport }) {
   const { query, setQuery, metric, setMetric, confidence, setConfidence, selectedSymbol } =
     useStackwiseStore();
+  const [includedGroups, setIncludedGroups] = useState<Set<number> | null>(null);
+  const includedSymbolIds = useMemo(
+    () => symbolIdsForGroups(report.groups, includedGroups),
+    [report.groups, includedGroups],
+  );
   const symbols = useMemo(
-    () => filterSymbols(report.symbols, query, confidence),
-    [report.symbols, query, confidence],
+    () =>
+      filterSymbols(report.symbols, query, confidence).filter(
+        (symbol) => !includedSymbolIds || includedSymbolIds.has(symbol.id),
+      ),
+    [report.symbols, query, confidence, includedSymbolIds],
   );
   const selected = selectedSymbol();
   const status = `${report.artifact.file_name} | ${report.summary.symbol_count} symbols | ${report.summary.known_frame_count} known | ${report.summary.unknown_frame_count} unknown`;
+  const primaryCrate = primaryCrateName(report);
 
   return (
     <Shell
@@ -50,6 +64,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
       toolbar={
         <>
           <div className="summaryChips">
+            {primaryCrate ? <span className="chip appChip">App <strong>{primaryCrate}</strong></span> : null}
             <span className="chip">Symbols <strong>{report.summary.symbol_count.toLocaleString()}</strong></span>
             <span className="chip">Known <strong>{report.summary.known_frame_count.toLocaleString()}</strong></span>
             <span className="chip">Unknown <strong>{report.summary.unknown_frame_count.toLocaleString()}</strong></span>
@@ -74,10 +89,16 @@ function ReportView({ report }: { report: StackwiseReport }) {
           </div>
         </>
       }
-      left={<ModuleList report={report} />}
+      left={
+        <ModuleList
+          report={report}
+          includedGroups={includedGroups}
+          setIncludedGroups={setIncludedGroups}
+        />
+      }
       right={<Details symbol={selected} />}
     >
-      <TreemapCanvas symbols={symbols} metric={metric} selectedId={selected?.id ?? null} />
+      <TreemapCanvas report={report} symbols={symbols} metric={metric} selectedId={selected?.id ?? null} />
     </Shell>
   );
 }
@@ -112,9 +133,29 @@ function Shell({
   );
 }
 
-function ModuleList({ report }: { report: StackwiseReport }) {
+function ModuleList({
+  report,
+  includedGroups,
+  setIncludedGroups,
+}: {
+  report: StackwiseReport;
+  includedGroups: Set<number> | null;
+  setIncludedGroups: Dispatch<SetStateAction<Set<number> | null>>;
+}) {
   const parentRef = useRef<HTMLDivElement>(null);
-  const groups = report.groups;
+  const groups = useMemo(
+    () =>
+      [...report.groups].sort((left, right) => {
+        const leftSymbol = report.symbols[left.symbol_ids[0]];
+        const rightSymbol = report.symbols[right.symbol_ids[0]];
+        const leftPriority = leftSymbol ? groupPriority(leftSymbol, report) : 3;
+        const rightPriority = rightSymbol ? groupPriority(rightSymbol, report) : 3;
+        const leftValue = left.own_frame_sum ?? left.worst_path_max ?? 0;
+        const rightValue = right.own_frame_sum ?? right.worst_path_max ?? 0;
+        return leftPriority - rightPriority || rightValue - leftValue || left.name.localeCompare(right.name);
+      }),
+    [report],
+  );
   const rowVirtualizer = useVirtualizer({
     count: groups.length,
     getScrollElement: () => parentRef.current,
@@ -123,20 +164,44 @@ function ModuleList({ report }: { report: StackwiseReport }) {
 
   return (
     <>
-      <h2>Modules</h2>
+      <div className="panelHeader">
+        <h2>Modules</h2>
+        <button type="button" onClick={() => setIncludedGroups(null)}>Show all</button>
+      </div>
       <div ref={parentRef} className="moduleList">
         <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: "relative" }}>
           {rowVirtualizer.getVirtualItems().map((row) => {
             const group = groups[row.index];
+            const firstSymbol = report.symbols[group.symbol_ids[0]];
+            const checked = !includedGroups || includedGroups.has(group.id);
             return (
-              <div
+              <label
                 className="moduleRow"
                 key={group.id}
                 style={{ transform: `translateY(${row.start}px)` }}
               >
-                <strong>{group.name}</strong>
+                <span className="moduleTitle">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => {
+                      setIncludedGroups((current) => {
+                        const allIds = report.groups.map((item) => item.id);
+                        const next = current ? new Set(current) : new Set(allIds);
+                        if (next.has(group.id)) next.delete(group.id);
+                        else next.add(group.id);
+                        return next.size === allIds.length ? null : next;
+                      });
+                    }}
+                  />
+                  <span
+                    className="swatch"
+                    style={{ background: firstSymbol ? groupColor(firstSymbol, report) : "#94a3b8" }}
+                  />
+                  <strong>{group.name}</strong>
+                </span>
                 <span>{group.symbol_ids.length} symbols</span>
-              </div>
+              </label>
             );
           })}
         </div>
@@ -146,6 +211,37 @@ function ModuleList({ report }: { report: StackwiseReport }) {
 }
 
 function Details({ symbol }: { symbol: SymbolReport | null }) {
+  const [context, setContext] = useState<SymbolContext | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!symbol) {
+      setContext(null);
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setContext(null);
+    setLoading(true);
+    fetch(`/api/symbol-context?id=${encodeURIComponent(symbol.id)}`)
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json() as Promise<SymbolContext>;
+      })
+      .then((value) => {
+        if (!cancelled) setContext(value);
+      })
+      .catch((cause) => {
+        if (!cancelled) setContext({ source: null, disassembly: null, messages: [`Context unavailable: ${cause}`] });
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol]);
+
   if (!symbol) {
     return (
       <>
@@ -164,6 +260,8 @@ function Details({ symbol }: { symbol: SymbolReport | null }) {
         <dl>
           <dt>Own frame</dt>
           <dd>{formatBytes(symbol.own_frame.bytes)}</dd>
+          <dt>Crate</dt>
+          <dd>{symbolCrate(symbol) ?? "unknown"}</dd>
           <dt>Worst path</dt>
           <dd>{formatBytes(symbol.worst_path.bytes)}</dd>
           <dt>Status</dt>
@@ -187,15 +285,60 @@ function Details({ symbol }: { symbol: SymbolReport | null }) {
           <SquareArrowOutUpRight size={15} /> Open source
         </button>
       </div>
+      <CodePanel context={context} loading={loading} />
     </>
   );
 }
 
+function CodePanel({ context, loading }: { context: SymbolContext | null; loading: boolean }) {
+  if (loading) return <div className="codePanel"><p className="contextMessage">Loading source and disassembly...</p></div>;
+  if (!context) return <div className="codePanel"><p className="contextMessage">Select a symbol to load source and disassembly.</p></div>;
+
+  return (
+    <div className="codePanel">
+      <div className="codeHeader">
+        <h2>Side View</h2>
+        {context.source ? (
+          <a className="sourceLink" href={sourceHref(context.source.file, context.source.line)} title={context.source.file}>
+            {context.source.file}:{context.source.line}
+          </a>
+        ) : <span className="muted">No source link</span>}
+      </div>
+      {context.source ? (
+        <div className="codeBlock">
+          <div className="codeTitle"><span>Implementation</span><span>{context.source.language}</span></div>
+          {context.source.lines.map((line) => (
+            <div className={`codeLine${line.highlight ? " highlight" : ""}`} key={line.number}>
+              <span className="lineNo">{line.number}</span>
+              <span>{line.text}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {context.disassembly ? (
+        <div className="codeBlock">
+          <div className="codeTitle"><span>Disassembly</span><span>{context.disassembly.architecture}</span></div>
+          {context.disassembly.instructions.map((line) => (
+            <div className="codeLine asmLine" key={`${line.address}-${line.bytes}`}>
+              <span className="address">{line.address}</span>
+              <span className="bytes">{line.bytes}</span>
+              <span>{line.text}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {context.messages.map((message) => <p className="contextMessage" key={message}>{message}</p>)}
+    </div>
+  );
+}
+
 function TreemapCanvas({
+  report,
   symbols,
   metric,
   selectedId,
 }: {
+  report: StackwiseReport;
   symbols: SymbolReport[];
   metric: Metric;
   selectedId: number | null;
@@ -217,11 +360,12 @@ function TreemapCanvas({
       if (!context) return;
 
       context.clearRect(0, 0, canvas.width, canvas.height);
-      const rects = buildTreemap(symbols, metric, canvas.width, canvas.height);
+      const rects = buildTreemap(symbols, metric, canvas.width, canvas.height, report);
       rectsRef.current = rects;
 
       for (const rect of rects) {
-        context.fillStyle = confidenceColor(rect.symbol);
+        const fill = groupColor(rect.symbol, report);
+        context.fillStyle = rectGradient(context, rect, fill);
         roundRect(context, rect.x, rect.y, rect.width, rect.height, Math.min(5 * ratio, rect.width / 5, rect.height / 5));
         context.fill();
         context.strokeStyle = "rgba(255,255,255,0.82)";
@@ -235,7 +379,7 @@ function TreemapCanvas({
         }
 
         if (rect.width > 90 && rect.height > 28) {
-          context.fillStyle = "#111827";
+          context.fillStyle = readableText(fill);
           context.font = `${12 * ratio}px system-ui`;
           context.fillText(trim(rect.symbol.demangled, Math.floor(rect.width / (7 * ratio))), rect.x + 6, rect.y + 16 * ratio);
         }
@@ -246,7 +390,7 @@ function TreemapCanvas({
     const observer = new ResizeObserver(draw);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [symbols, metric, selectedId]);
+  }, [report, symbols, metric, selectedId]);
 
   return (
     <>
@@ -274,6 +418,58 @@ function trim(text: string, max: number): string {
   if (text.length <= max) return text;
   if (max < 8) return text.slice(0, max);
   return `${text.slice(0, max - 3)}...`;
+}
+
+function symbolIdsForGroups(groups: GroupReport[], includedGroups: Set<number> | null): Set<number> | null {
+  if (!includedGroups) return null;
+  const ids = new Set<number>();
+  for (const group of groups) {
+    if (includedGroups.has(group.id)) {
+      for (const symbolId of group.symbol_ids) ids.add(symbolId);
+    }
+  }
+  return ids;
+}
+
+function sourceHref(file: string, line?: number | null): string {
+  const normalized = file.replace(/\\/g, "/");
+  const prefix = /^[a-zA-Z]:\//.test(normalized) ? "/" : "";
+  return `file://${prefix}${encodeURI(normalized)}${line ? `#L${line}` : ""}`;
+}
+
+function readableText(hex: string): string {
+  const value = hex.replace("#", "");
+  const red = Number.parseInt(value.slice(0, 2), 16);
+  const green = Number.parseInt(value.slice(2, 4), 16);
+  const blue = Number.parseInt(value.slice(4, 6), 16);
+  return (red * 299 + green * 587 + blue * 114) / 1000 > 150 ? "#101828" : "#ffffff";
+}
+
+function rectGradient(
+  context: CanvasRenderingContext2D,
+  rect: TreemapRect,
+  base: string,
+): CanvasGradient {
+  const gradient = context.createLinearGradient(rect.x, rect.y, rect.x + rect.width, rect.y + rect.height);
+  gradient.addColorStop(0, mixColor(base, "#ffffff", 0.18));
+  gradient.addColorStop(0.55, base);
+  gradient.addColorStop(1, mixColor(base, "#000000", 0.16));
+  return gradient;
+}
+
+function mixColor(left: string, right: string, amount: number): string {
+  const a = hexRgb(left);
+  const b = hexRgb(right);
+  return `rgb(${Math.round(a.red + (b.red - a.red) * amount)}, ${Math.round(a.green + (b.green - a.green) * amount)}, ${Math.round(a.blue + (b.blue - a.blue) * amount)})`;
+}
+
+function hexRgb(hex: string): { red: number; green: number; blue: number } {
+  const value = hex.replace("#", "");
+  return {
+    red: Number.parseInt(value.slice(0, 2), 16),
+    green: Number.parseInt(value.slice(2, 4), 16),
+    blue: Number.parseInt(value.slice(4, 6), 16),
+  };
 }
 
 function roundRect(

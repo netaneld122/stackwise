@@ -193,6 +193,7 @@ fn collect_symbols(
                 name: symbol.name().unwrap_or_default().to_owned(),
                 address: symbol.address(),
                 size: symbol.size(),
+                source_location: None,
             });
     }
 
@@ -203,6 +204,7 @@ fn collect_symbols(
                 name: symbol.name.clone(),
                 address: symbol.address,
                 size: symbol.size,
+                source_location: symbol.source_location.clone(),
             },
         );
     }
@@ -215,6 +217,7 @@ fn collect_symbols(
                 .end
                 .and_then(|end| end.checked_sub(*address))
                 .unwrap_or_default(),
+            source_location: None,
         });
     }
 
@@ -276,7 +279,7 @@ fn collect_symbols(
                 module_path,
                 address: raw.address,
                 size_bytes: (raw.size > 0).then_some(raw.size),
-                source_location: None,
+                source_location: raw.source_location,
                 object_format: format,
                 own_frame,
                 worst_path: WorstPathInfo {
@@ -561,6 +564,7 @@ struct RawSymbol {
     name: String,
     address: u64,
     size: u64,
+    source_location: Option<crate::SourceLocation>,
 }
 
 #[derive(Debug)]
