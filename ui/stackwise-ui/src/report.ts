@@ -95,6 +95,11 @@ export interface SymbolContext {
   messages: string[];
 }
 
+export interface SourceFileContext {
+  source?: SourceSnippet | null;
+  messages: string[];
+}
+
 export interface SourceSnippet {
   file: string;
   line?: number | null;

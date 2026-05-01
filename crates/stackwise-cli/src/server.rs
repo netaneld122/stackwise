@@ -43,6 +43,9 @@ pub fn serve_report(report_path: Utf8PathBuf, open_browser: bool) -> anyhow::Res
             (Method::Get, url) if url.starts_with("/api/symbol-context") => {
                 symbol_context_response(&report_path, url)
             }
+            (Method::Get, url) if url.starts_with("/api/source-file") => {
+                source_file_response(&report_path, url)
+            }
             (Method::Post, "/api/open-source") => {
                 let mut body = String::new();
                 let _ = request.as_reader().read_to_string(&mut body);
@@ -129,6 +132,35 @@ fn symbol_context_response(
     )
 }
 
+fn source_file_response(
+    report_path: &Utf8PathBuf,
+    url: &str,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let Some(id) = query_param(url, "id").and_then(|value| value.parse::<u32>().ok()) else {
+        return text_response(StatusCode(400), "missing symbol id".to_owned());
+    };
+
+    let report = match fs::read(report_path.as_std_path())
+        .ok()
+        .and_then(|data| serde_json::from_slice::<StackwiseReport>(&data).ok())
+    {
+        Some(report) => report,
+        None => return text_response(StatusCode(500), "failed to read report".to_owned()),
+    };
+
+    let Some(symbol) = report.symbols.iter().find(|symbol| symbol.id == id) else {
+        return text_response(StatusCode(404), "symbol not found".to_owned());
+    };
+
+    let source = source_file(symbol, &report);
+    let mut messages = Vec::new();
+    if source.is_none() {
+        messages.push("Full source file was unavailable for this symbol.".to_owned());
+    }
+
+    json_response(serde_json::to_vec(&SourceFileContext { source, messages }).unwrap_or_default())
+}
+
 fn query_param(url: &str, name: &str) -> Option<String> {
     let (_, query) = url.split_once('?')?;
     query.split('&').find_map(|pair| {
@@ -160,6 +192,18 @@ fn percent_decode(value: &str) -> String {
 }
 
 fn source_snippet(symbol: &SymbolReport, report: &StackwiseReport) -> Option<SourceSnippet> {
+    source_view(symbol, report, SourceViewMode::Function)
+}
+
+fn source_file(symbol: &SymbolReport, report: &StackwiseReport) -> Option<SourceSnippet> {
+    source_view(symbol, report, SourceViewMode::FullFile)
+}
+
+fn source_view(
+    symbol: &SymbolReport,
+    report: &StackwiseReport,
+    mode: SourceViewMode,
+) -> Option<SourceSnippet> {
     let location = symbol.source_location.as_ref()?;
     let path = resolve_source_path(location, report)?;
     let text = fs::read_to_string(&path).ok()?;
@@ -169,7 +213,10 @@ fn source_snippet(symbol: &SymbolReport, report: &StackwiseReport) -> Option<Sou
     }
 
     let highlight_line = location.line.unwrap_or(1).clamp(1, lines.len() as u32);
-    let (start, end) = function_span(&lines, highlight_line as usize - 1);
+    let (start, end) = match mode {
+        SourceViewMode::Function => function_span(&lines, highlight_line as usize - 1),
+        SourceViewMode::FullFile => (0, lines.len()),
+    };
 
     Some(SourceSnippet {
         file: path.display().to_string(),
@@ -189,6 +236,12 @@ fn source_snippet(symbol: &SymbolReport, report: &StackwiseReport) -> Option<Sou
             })
             .collect(),
     })
+}
+
+#[derive(Clone, Copy)]
+enum SourceViewMode {
+    Function,
+    FullFile,
 }
 
 fn resolve_source_path(location: &SourceLocation, report: &StackwiseReport) -> Option<PathBuf> {
@@ -459,6 +512,12 @@ fn symbol_bytes<'data>(file: &object::File<'data>, address: u64, size: u64) -> O
 struct SymbolContext {
     source: Option<SourceSnippet>,
     disassembly: Option<DisassemblyView>,
+    messages: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct SourceFileContext {
+    source: Option<SourceSnippet>,
     messages: Vec<String>,
 }
 

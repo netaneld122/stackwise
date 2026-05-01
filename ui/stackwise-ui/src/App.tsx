@@ -19,6 +19,8 @@ import {
   symbolCrate,
   type ConfidenceFilter,
   type Metric,
+  type SourceFileContext,
+  type SourceSnippet,
   type StackwiseReport,
   type SymbolContext,
   type SymbolReport,
@@ -371,13 +373,23 @@ function Details({ symbol }: { symbol: SymbolReport | null }) {
           <SquareArrowOutUpRight size={15} /> Open source
         </button>
       </div>
-      <CodePanel context={context} loading={loading} />
+      <CodePanel context={context} loading={loading} symbol={symbol} />
     </>
   );
 }
 
-function CodePanel({ context, loading }: { context: SymbolContext | null; loading: boolean }) {
-  const [popout, setPopout] = useState<"source" | "disassembly" | null>(null);
+type CodeModalKind = "source" | "disassembly" | "file";
+
+function CodePanel({
+  context,
+  loading,
+  symbol,
+}: {
+  context: SymbolContext | null;
+  loading: boolean;
+  symbol: SymbolReport;
+}) {
+  const [popout, setPopout] = useState<CodeModalKind | null>(null);
 
   useEffect(() => {
     setPopout(null);
@@ -391,9 +403,14 @@ function CodePanel({ context, loading }: { context: SymbolContext | null; loadin
       <div className="codeHeader">
         <h2>Side View</h2>
         {context.source ? (
-          <a className="sourceLink" href={sourceHref(context.source.file, context.source.line)} title={context.source.file}>
+          <button
+            className="sourceLink"
+            type="button"
+            title={`Open full source file: ${context.source.file}`}
+            onClick={() => setPopout("file")}
+          >
             {context.source.file}:{context.source.line}
-          </a>
+          </button>
         ) : <span className="muted">No source link</span>}
       </div>
       {context.source ? (
@@ -401,12 +418,12 @@ function CodePanel({ context, loading }: { context: SymbolContext | null; loadin
           className="codeBlock"
           role="button"
           tabIndex={0}
-          title="Open implementation in a larger view"
-          onClick={() => setPopout("source")}
+          title="Open full source file focused on this function"
+          onClick={() => setPopout("file")}
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === " ") {
               event.preventDefault();
-              setPopout("source");
+              setPopout("file");
             }
           }}
         >
@@ -444,7 +461,7 @@ function CodePanel({ context, loading }: { context: SymbolContext | null; loadin
         </div>
       ) : null}
       {context.messages.map((message) => <p className="contextMessage" key={message}>{message}</p>)}
-      {popout ? <CodeModal context={context} kind={popout} onClose={() => setPopout(null)} /> : null}
+      {popout ? <CodeModal context={context} kind={popout} symbolId={symbol.id} onClose={() => setPopout(null)} /> : null}
     </div>
   );
 }
@@ -452,17 +469,23 @@ function CodePanel({ context, loading }: { context: SymbolContext | null; loadin
 function CodeModal({
   context,
   kind,
+  symbolId,
   onClose,
 }: {
   context: SymbolContext;
-  kind: "source" | "disassembly";
+  kind: CodeModalKind;
+  symbolId: number;
   onClose: () => void;
 }) {
   const [fullscreen, setFullscreen] = useState(false);
-  const title = kind === "source" ? "Implementation" : "Disassembly";
-  const subtitle = kind === "source"
-    ? context.source ? `${context.source.file}:${context.source.line ?? ""}` : "No source link"
-    : context.disassembly?.architecture ?? "No disassembly";
+  const [fullFile, setFullFile] = useState<SourceFileContext | null>(null);
+  const [fullFileError, setFullFileError] = useState<string | null>(null);
+  const [fullFileLoading, setFullFileLoading] = useState(kind === "file");
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const title = kind === "file" ? "Full file" : kind === "source" ? "Implementation" : "Disassembly";
+  const subtitle = kind === "disassembly"
+    ? context.disassembly?.architecture ?? "No disassembly"
+    : context.source ? `${context.source.file}:${context.source.line ?? ""}` : "No source link";
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -471,6 +494,38 @@ function CodeModal({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  useEffect(() => {
+    if (kind !== "file") return;
+    let cancelled = false;
+    setFullFile(null);
+    setFullFileError(null);
+    setFullFileLoading(true);
+    fetch(`/api/source-file?id=${encodeURIComponent(symbolId)}`)
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json() as Promise<SourceFileContext>;
+      })
+      .then((payload) => {
+        if (!cancelled) setFullFile(payload);
+      })
+      .catch((cause) => {
+        if (!cancelled) setFullFileError(String(cause));
+      })
+      .finally(() => {
+        if (!cancelled) setFullFileLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [kind, symbolId]);
+
+  useEffect(() => {
+    if (kind !== "file" || !fullFile?.source) return;
+    bodyRef.current
+      ?.querySelector(".codeLine.highlight")
+      ?.scrollIntoView({ block: "center" });
+  }, [kind, fullFile]);
 
   return (
     <div className={`codeModal${fullscreen ? " fullscreen" : ""}`} aria-hidden="false">
@@ -488,17 +543,9 @@ function CodeModal({
             <button type="button" onClick={onClose}>Close</button>
           </div>
         </div>
-        <div className="codeModalBody">
+        <div className="codeModalBody" ref={bodyRef}>
           {kind === "source" && context.source ? (
-            <div className="codeBlock modalCodeBlock">
-              <div className="codeTitle"><span>Implementation</span><span>{context.source.language}</span></div>
-              {context.source.lines.map((line) => (
-                <div className={`codeLine${line.highlight ? " highlight" : ""}`} key={line.number}>
-                  <span className="lineNo">{line.number}</span>
-                  <span>{line.text}</span>
-                </div>
-              ))}
-            </div>
+            <SourceLines source={context.source} title="Implementation" />
           ) : null}
           {kind === "disassembly" && context.disassembly ? (
             <div className="codeBlock modalCodeBlock">
@@ -512,8 +559,28 @@ function CodeModal({
               ))}
             </div>
           ) : null}
+          {kind === "file" && fullFileLoading ? <p className="contextMessage">Loading full source file...</p> : null}
+          {kind === "file" && fullFileError ? <p className="contextMessage">Full source file unavailable: {fullFileError}</p> : null}
+          {kind === "file" && fullFile?.source ? <SourceLines source={fullFile.source} title="Full file" /> : null}
+          {kind === "file" && fullFile?.messages.map((message) => (
+            <p className="contextMessage" key={message}>{message}</p>
+          ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+function SourceLines({ source, title }: { source: SourceSnippet; title: string }) {
+  return (
+    <div className="codeBlock modalCodeBlock">
+      <div className="codeTitle"><span>{title}</span><span>{source.language}</span></div>
+      {source.lines.map((line) => (
+        <div className={`codeLine${line.highlight ? " highlight" : ""}`} key={line.number}>
+          <span className="lineNo">{line.number}</span>
+          <span>{line.text}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -780,12 +847,6 @@ function symbolIdsForModules(tree: ModuleTree, includedModules: Set<string> | nu
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
-}
-
-function sourceHref(file: string, line?: number | null): string {
-  const normalized = file.replace(/\\/g, "/");
-  const prefix = /^[a-zA-Z]:\//.test(normalized) ? "/" : "";
-  return `file://${prefix}${encodeURI(normalized)}${line ? `#L${line}` : ""}`;
 }
 
 function readableText(hex: string): string {

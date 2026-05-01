@@ -467,12 +467,24 @@
       }
 
       .sourceLink {
+        border: 0;
+        padding: 0;
+        background: transparent;
         min-width: 0;
         overflow: hidden;
         color: #0f766e;
+        cursor: zoom-in;
+        font-family: inherit;
         font-size: 12px;
+        text-align: right;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+
+      .sourceLink:hover,
+      .sourceLink:focus-visible {
+        color: #115e59;
+        text-decoration: underline;
       }
 
       .codeGrid {
@@ -948,7 +960,9 @@
         context: null,
         contextLoading: false,
         contextSymbolId: null,
+        fullSourceCache: new Map(),
         codeModalKind: null,
+        codeModalSymbolId: null,
       };
       const app = document.querySelector(".app");
       const canvas = document.getElementById("treemap");
@@ -1386,7 +1400,7 @@
           <div class="codePanel">
             <div class="codeHeader">
               <h2>Side View</h2>
-              ${context.source ? `<a class="sourceLink" href="${sourceHref(context.source)}" target="_blank" title="${escapeHtml(context.source.file)}">${escapeHtml(context.source.file)}:${context.source.line ?? ""}</a>` : `<span class="muted">No source link</span>`}
+              ${context.source ? `<button class="sourceLink" type="button" data-popout="file" title="Open full source file: ${escapeHtml(context.source.file)}">${escapeHtml(context.source.file)}:${context.source.line ?? ""}</button>` : `<span class="muted">No source link</span>`}
             </div>
             <div class="codeGrid">
               ${source}
@@ -1396,11 +1410,11 @@
           </div>`;
       }
 
-      function renderSourceBlock(source, modal) {
+      function renderSourceBlock(source, modal, title = "Implementation") {
         if (!source) return "";
         return `
-          <div class="codeBlock${modal ? " modalCodeBlock" : ""}" ${modal ? "" : 'data-popout="source" tabindex="0" title="Open implementation in a larger view"'}>
-            <div class="codeTitle"><span>Implementation</span><span>${escapeHtml(source.language)}</span></div>
+          <div class="codeBlock${modal ? " modalCodeBlock" : ""}" ${modal ? "" : 'data-popout="file" tabindex="0" title="Open full source file focused on this function"'}>
+            <div class="codeTitle"><span>${escapeHtml(title)}</span><span>${escapeHtml(source.language)}</span></div>
             ${source.lines.map(line => `
               <div class="codeLine${line.highlight ? " highlight" : ""}">
                 <span class="lineNo">${line.number}</span>
@@ -1439,6 +1453,10 @@
       function openCodeModal(kind, symbol) {
         const context = state.contextSymbolId === symbol.id ? state.context : null;
         if (!context) return;
+        if (kind === "file") {
+          openSourceFileModal(symbol, context);
+          return;
+        }
         const isSource = kind === "source";
         const title = isSource ? "Implementation" : "Disassembly";
         const sourceLabel = context.source ? `${context.source.file}:${context.source.line ?? ""}` : symbol.demangled;
@@ -1450,10 +1468,59 @@
         if (!codeModalBody.innerHTML.trim()) {
           codeModalBody.innerHTML = `<div class="contextMessage">No ${escapeHtml(title.toLowerCase())} is available for this symbol.</div>`;
         }
+        showCodeModal(kind, symbol.id);
+      }
+
+      function openSourceFileModal(symbol, context) {
+        if (!context.source) return;
+        const sourceLabel = `${context.source.file}:${context.source.line ?? ""}`;
+        codeModalTitle.textContent = "Full file";
+        codeModalSubtitle.textContent = sourceLabel;
+        showCodeModal("file", symbol.id);
+
+        const cached = state.fullSourceCache.get(symbol.id);
+        if (cached) {
+          renderSourceFileModal(cached);
+          return;
+        }
+
+        codeModalBody.innerHTML = `<div class="contextMessage">Loading full source file...</div>`;
+        fetch(`/api/source-file?id=${encodeURIComponent(symbol.id)}`)
+          .then(response => response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)))
+          .then(payload => {
+            if (state.codeModalKind !== "file" || state.codeModalSymbolId !== symbol.id) return;
+            state.fullSourceCache.set(symbol.id, payload);
+            renderSourceFileModal(payload);
+          })
+          .catch(error => {
+            if (state.codeModalKind !== "file" || state.codeModalSymbolId !== symbol.id) return;
+            codeModalBody.innerHTML = `<div class="contextMessage">Full source file unavailable: ${escapeHtml(String(error))}</div>`;
+          });
+      }
+
+      function renderSourceFileModal(payload) {
+        const source = payload.source;
+        const messages = (payload.messages ?? []).map(message => `<div class="contextMessage">${escapeHtml(message)}</div>`).join("");
+        codeModalBody.innerHTML = source
+          ? `${renderSourceBlock(source, true, "Full file")}${messages}`
+          : messages || `<div class="contextMessage">Full source file unavailable.</div>`;
+        scrollHighlightedLineIntoView();
+      }
+
+      function showCodeModal(kind, symbolId) {
+        state.codeModalKind = kind;
+        state.codeModalSymbolId = symbolId;
         codeModal.classList.remove("hidden");
         codeModal.setAttribute("aria-hidden", "false");
         codeModalFullscreen.textContent = codeModal.classList.contains("fullscreen") ? "Windowed" : "Full screen";
         codeModalClose.focus();
+      }
+
+      function scrollHighlightedLineIntoView() {
+        const highlighted = codeModalBody.querySelector(".codeLine.highlight");
+        if (highlighted) {
+          highlighted.scrollIntoView({ block: "center" });
+        }
       }
 
       function closeCodeModal() {
@@ -1462,6 +1529,8 @@
         codeModal.setAttribute("aria-hidden", "true");
         codeModalBody.innerHTML = "";
         codeModalFullscreen.textContent = "Full screen";
+        state.codeModalKind = null;
+        state.codeModalSymbolId = null;
       }
 
       function draw() {
@@ -1801,12 +1870,6 @@
         if (text.length <= max) return text;
         if (max < 8) return text.slice(0, max);
         return `${text.slice(0, max - 4)}...`;
-      }
-
-      function sourceHref(source) {
-        const normalized = source.file.replace(/\\/g, "/");
-        const prefix = /^[a-zA-Z]:\//.test(normalized) ? "/" : "";
-        return `file://${prefix}${encodeURI(normalized)}${source.line ? `#L${source.line}` : ""}`;
       }
 
       function highlightSource(text, language) {

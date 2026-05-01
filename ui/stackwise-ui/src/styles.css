@@ -474,12 +474,24 @@ dd {
 }
 
 .sourceLink {
+  border: 0;
+  padding: 0;
+  background: transparent;
   min-width: 0;
   overflow: hidden;
   color: #0f766e;
+  cursor: zoom-in;
+  font-family: inherit;
   font-size: 12px;
+  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sourceLink:hover,
+.sourceLink:focus-visible {
+  color: #115e59;
+  text-decoration: underline;
 }
 
 .codeBlock {
