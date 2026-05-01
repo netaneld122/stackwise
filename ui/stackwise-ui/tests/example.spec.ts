@@ -16,12 +16,14 @@ test("renders the application shell", async ({ page }) => {
           size_bytes: 100,
         },
         summary: {
-          symbol_count: 1,
-          edge_count: 0,
-          known_frame_count: 1,
+          symbol_count: 2,
+          edge_count: 1,
+          known_frame_count: 2,
           unknown_frame_count: 0,
           recursive_symbol_count: 0,
           indirect_edge_count: 0,
+          max_own_frame: { symbol_id: 1, bytes: 24, demangled: "demo::leaf" },
+          max_worst_path: { symbol_id: 0, bytes: 32, demangled: "demo::main" },
           confidence: "exact",
         },
         symbols: [
@@ -38,9 +40,22 @@ test("renders the application shell", async ({ page }) => {
             evidence: [],
             unresolved_reasons: [],
           },
+          {
+            id: 1,
+            name: "demo::leaf",
+            demangled: "demo::leaf",
+            module_path: ["demo"],
+            address: 2,
+            size_bytes: 10,
+            own_frame: { bytes: 24, status: "known", evidence_source: "elf_stack_sizes" },
+            worst_path: { bytes: 24, status: "known", path: [1] },
+            confidence: "exact",
+            evidence: [],
+            unresolved_reasons: [],
+          },
         ],
-        edges: [],
-        groups: [{ id: 0, name: "demo", parent: null, symbol_ids: [0], own_frame_sum: 8, worst_path_max: 8 }],
+        edges: [{ caller: 0, callee: 1, target_address: 2, kind: "direct_call", confidence: "medium" }],
+        groups: [{ id: 0, name: "demo", parent: null, symbol_ids: [0, 1], own_frame_sum: 32, worst_path_max: 32 }],
         diagnostics: [],
       }),
     });
@@ -48,5 +63,9 @@ test("renders the application shell", async ({ page }) => {
 
   await page.goto("/");
   await expect(page.getByText("Stackwise")).toBeVisible();
-  await expect(page.locator("footer")).toContainText("1 symbols");
+  await expect(page.locator("footer")).toContainText("2 symbols");
+  await page.getByRole("tab", { name: "Call Graph" }).click();
+  await expect(page.getByText("demo::main")).toBeVisible();
+  await expect(page.getByText("demo::leaf")).toBeVisible();
+  await expect(page.getByText("Branch").first()).toBeVisible();
 });

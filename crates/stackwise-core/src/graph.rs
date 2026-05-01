@@ -3,14 +3,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::{EdgeKind, EdgeReport, FrameStatus, SymbolReport, UnresolvedReason, UpperBoundStatus};
 
 pub fn compute_worst_paths(symbols: &mut [SymbolReport], edges: &[EdgeReport]) {
-    let mut adjacency: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    let mut adjacency: BTreeMap<u32, Vec<CallTarget>> = BTreeMap::new();
     let mut indirect_callers = BTreeSet::new();
 
     for edge in edges {
         match edge.kind {
             EdgeKind::DirectCall | EdgeKind::TailCall => {
                 if let Some(callee) = edge.callee {
-                    adjacency.entry(edge.caller).or_default().push(callee);
+                    adjacency
+                        .entry(edge.caller)
+                        .or_default()
+                        .push(CallTarget { callee, kind: edge.kind });
                 }
             }
             EdgeKind::IndirectCall => {
@@ -70,7 +73,7 @@ fn visit(
     id: u32,
     symbols: &[SymbolReport],
     by_id: &BTreeMap<u32, usize>,
-    adjacency: &BTreeMap<u32, Vec<u32>>,
+    adjacency: &BTreeMap<u32, Vec<CallTarget>>,
     memo: &mut BTreeMap<u32, PathResult>,
     visiting: &mut BTreeSet<u32>,
 ) -> PathResult {
@@ -120,8 +123,8 @@ fn visit(
     }
 
     let mut best_child: Option<PathResult> = None;
-    for child in adjacency.get(&id).into_iter().flatten().copied() {
-        let result = visit(child, symbols, by_id, adjacency, memo, visiting);
+    for target in adjacency.get(&id).into_iter().flatten().copied() {
+        let result = visit(target.callee, symbols, by_id, adjacency, memo, visiting);
         if result.status != UpperBoundStatus::Known {
             visiting.remove(&id);
             return PathResult {
@@ -131,8 +134,19 @@ fn visit(
             };
         }
 
-        if best_child.as_ref().and_then(|current| current.bytes) < result.bytes {
-            best_child = Some(result);
+        let candidate_bytes = result.bytes.map(|bytes| match target.kind {
+            EdgeKind::TailCall => bytes.max(own.unwrap_or_default()),
+            EdgeKind::DirectCall => bytes + own.unwrap_or_default(),
+            EdgeKind::IndirectCall | EdgeKind::ExternalCall => bytes,
+        });
+        let candidate = PathResult {
+            bytes: candidate_bytes,
+            status: UpperBoundStatus::Known,
+            path: result.path,
+        };
+
+        if best_child.as_ref().and_then(|current| current.bytes) < candidate.bytes {
+            best_child = Some(candidate);
         }
     }
 
@@ -141,7 +155,7 @@ fn visit(
     let own_bytes = own.unwrap_or_default();
     match best_child {
         Some(child) => PathResult {
-            bytes: child.bytes.map(|bytes| bytes + own_bytes),
+            bytes: child.bytes,
             status: UpperBoundStatus::Known,
             path: prepend(id, child.path),
         },
@@ -169,6 +183,12 @@ struct PathResult {
     bytes: Option<u64>,
     status: UpperBoundStatus,
     path: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CallTarget {
+    callee: u32,
+    kind: EdgeKind,
 }
 
 #[cfg(test)]
@@ -204,6 +224,17 @@ mod tests {
         compute_worst_paths(&mut symbols, &edges);
 
         assert_eq!(symbols[0].worst_path.status, UpperBoundStatus::Recursive);
+    }
+
+    #[test]
+    fn tail_calls_do_not_add_frames() {
+        let mut symbols = vec![symbol(0, 64), symbol(1, 128)];
+        let edges = vec![edge(0, Some(1), EdgeKind::TailCall)];
+
+        compute_worst_paths(&mut symbols, &edges);
+
+        assert_eq!(symbols[0].worst_path.bytes, Some(128));
+        assert_eq!(symbols[0].worst_path.path, [0, 1]);
     }
 
     fn symbol(id: u32, frame: u64) -> SymbolReport {

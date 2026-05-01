@@ -27,12 +27,20 @@ export interface StackwiseReport {
     unknown_frame_count: number;
     recursive_symbol_count: number;
     indirect_edge_count: number;
+    max_own_frame?: SymbolMetric | null;
+    max_worst_path?: SymbolMetric | null;
     confidence: Confidence;
   };
   symbols: SymbolReport[];
   edges: EdgeReport[];
   groups: GroupReport[];
   diagnostics: Diagnostic[];
+}
+
+export interface SymbolMetric {
+  symbol_id: number;
+  bytes: number;
+  demangled: string;
 }
 
 export interface SymbolReport {
@@ -63,11 +71,13 @@ export interface SymbolReport {
   unresolved_reasons: string[];
 }
 
+export type EdgeKind = "direct_call" | "tail_call" | "indirect_call" | "external_call";
+
 export interface EdgeReport {
   caller: number;
   callee?: number | null;
   target_address?: number | null;
-  kind: string;
+  kind: EdgeKind;
   confidence: Confidence;
 }
 
@@ -88,6 +98,7 @@ export interface Diagnostic {
 
 export type Metric = "own" | "worst" | "code" | "risk";
 export type ConfidenceFilter = "all" | "known" | "unknown";
+export type ViewMode = "treemap" | "call_graph";
 
 export interface SymbolContext {
   source?: SourceSnippet | null;

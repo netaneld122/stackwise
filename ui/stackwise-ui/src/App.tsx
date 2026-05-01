@@ -9,8 +9,28 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
-import { Search, SquareArrowOutUpRight } from "lucide-react";
+import * as dagre from "@dagrejs/dagre";
 import {
+  Background,
+  Controls as FlowControls,
+  Handle,
+  MarkerType,
+  MiniMap,
+  Position,
+  ReactFlow,
+  type Edge as FlowEdge,
+  type Node as FlowNode,
+  type NodeProps,
+} from "@xyflow/react";
+import { GitBranch, Grid2X2, RotateCcw, Search, SquareArrowOutUpRight } from "lucide-react";
+import {
+  buildFocusedCallGraph,
+  chooseDefaultRoot,
+  symbolNodeId,
+  type GraphNode,
+} from "./callGraph";
+import {
+  type EdgeKind,
   filterSymbols,
   formatBytes,
   groupColor,
@@ -24,6 +44,7 @@ import {
   type StackwiseReport,
   type SymbolContext,
   type SymbolReport,
+  type ViewMode,
 } from "./report";
 import { useStackwiseStore } from "./store";
 import { buildTreemap, type TreemapRect } from "./treemap";
@@ -50,7 +71,18 @@ export function App() {
 }
 
 function ReportView({ report }: { report: StackwiseReport }) {
-  const { query, setQuery, metric, setMetric, confidence, setConfidence, selectedSymbol } =
+  const {
+    query,
+    setQuery,
+    metric,
+    setMetric,
+    viewMode,
+    setViewMode,
+    confidence,
+    setConfidence,
+    selectedId,
+    selectedSymbol,
+  } =
     useStackwiseStore();
   const moduleTree = useMemo(() => buildModuleTree(report), [report]);
   const [includedModules, setIncludedModules] = useState<Set<string> | null>(() =>
@@ -75,8 +107,37 @@ function ReportView({ report }: { report: StackwiseReport }) {
     [report.symbols, query, confidence, includedSymbolIds],
   );
   const selected = selectedSymbol();
+  const [graphRootId, setGraphRootId] = useState<number | null>(null);
+  const [callerDepth, setCallerDepth] = useState(1);
+  const [calleeDepth, setCalleeDepth] = useState(4);
+  const [edgeKinds, setEdgeKinds] = useState<Set<EdgeKind>>(
+    () => new Set(["direct_call", "tail_call", "indirect_call", "external_call"]),
+  );
   const status = `${report.artifact.file_name} | ${report.summary.symbol_count} symbols | ${report.summary.known_frame_count} known | ${report.summary.unknown_frame_count} unknown`;
   const primaryCrate = primaryCrateName(report);
+  const visibleSymbolIds = useMemo(() => new Set(symbols.map((symbol) => symbol.id)), [symbols]);
+  const defaultGraphRoot = useMemo(
+    () => chooseDefaultRoot(report, symbols, selected?.id ?? null),
+    [report, symbols, selected?.id],
+  );
+  const effectiveGraphRoot = graphRootId != null && visibleSymbolIds.has(graphRootId)
+    ? graphRootId
+    : defaultGraphRoot;
+
+  useEffect(() => {
+    if (viewMode === "call_graph" && graphRootId == null && defaultGraphRoot != null) {
+      setGraphRootId(defaultGraphRoot);
+    }
+  }, [defaultGraphRoot, graphRootId, viewMode]);
+
+  const toggleEdgeKind = (kind: EdgeKind) => {
+    setEdgeKinds((current) => {
+      const next = new Set(current);
+      if (next.has(kind) && next.size > 1) next.delete(kind);
+      else next.add(kind);
+      return next;
+    });
+  };
 
   return (
     <Shell
@@ -90,17 +151,55 @@ function ReportView({ report }: { report: StackwiseReport }) {
             <span className="chip">Unknown <strong>{report.summary.unknown_frame_count.toLocaleString()}</strong></span>
             <span className="chip">Confidence <strong>{report.summary.confidence}</strong></span>
           </div>
+          <ViewTabs viewMode={viewMode} setViewMode={setViewMode} />
           <div className="controls">
             <div className="searchBox">
               <Search size={16} />
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Symbol, crate, module" />
             </div>
-            <select value={metric} onChange={(event) => setMetric(event.target.value as Metric)}>
-              <option value="own">Own frame</option>
-              <option value="worst">Worst path</option>
-              <option value="code">Code size</option>
-              <option value="risk">Unresolved risk</option>
-            </select>
+            {viewMode === "treemap" ? (
+              <select value={metric} onChange={(event) => setMetric(event.target.value as Metric)}>
+                <option value="own">Own frame</option>
+                <option value="worst">Worst path</option>
+                <option value="code">Code size</option>
+                <option value="risk">Unresolved risk</option>
+              </select>
+            ) : (
+              <div className="graphToolbar" aria-label="Call graph controls">
+                <button
+                  type="button"
+                  disabled={!selected || !visibleSymbolIds.has(selected.id)}
+                  onClick={() => selected && setGraphRootId(selected.id)}
+                >
+                  <RotateCcw size={14} /> Use selected
+                </button>
+                <label>
+                  Callers
+                  <select value={callerDepth} onChange={(event) => setCallerDepth(Number(event.target.value))}>
+                    {[0, 1, 2, 3].map((value) => <option key={value} value={value}>{value}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Callees
+                  <select value={calleeDepth} onChange={(event) => setCalleeDepth(Number(event.target.value))}>
+                    {[1, 2, 3, 4, 5, 6].map((value) => <option key={value} value={value}>{value}</option>)}
+                  </select>
+                </label>
+                <div className="edgeToggles" aria-label="Call edge filters">
+                  {(["direct_call", "tail_call", "indirect_call", "external_call"] as EdgeKind[]).map((kind) => (
+                    <button
+                      className={edgeKinds.has(kind) ? "active" : ""}
+                      key={kind}
+                      type="button"
+                      onClick={() => toggleEdgeKind(kind)}
+                      title={edgeKindLabel(kind)}
+                    >
+                      {edgeKindShortLabel(kind)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <select value={confidence} onChange={(event) => setConfidence(event.target.value as ConfidenceFilter)}>
               <option value="all">All confidence</option>
               <option value="known">Known frames</option>
@@ -120,8 +219,51 @@ function ReportView({ report }: { report: StackwiseReport }) {
       }
       right={<Details symbol={selected} />}
     >
-      <TreemapCanvas report={report} symbols={symbols} metric={metric} selectedId={selected?.id ?? null} />
+      {viewMode === "treemap" ? (
+        <TreemapCanvas report={report} symbols={symbols} metric={metric} selectedId={selectedId} />
+      ) : (
+        <CallGraphView
+          report={report}
+          symbols={symbols}
+          rootId={effectiveGraphRoot}
+          callerDepth={callerDepth}
+          calleeDepth={calleeDepth}
+          edgeKinds={edgeKinds}
+          selectedId={selectedId}
+        />
+      )}
     </Shell>
+  );
+}
+
+function ViewTabs({
+  viewMode,
+  setViewMode,
+}: {
+  viewMode: ViewMode;
+  setViewMode: (viewMode: ViewMode) => void;
+}) {
+  return (
+    <div className="viewTabs" role="tablist" aria-label="Middle pane view">
+      <button
+        className={viewMode === "treemap" ? "active" : ""}
+        type="button"
+        role="tab"
+        aria-selected={viewMode === "treemap"}
+        onClick={() => setViewMode("treemap")}
+      >
+        <Grid2X2 size={15} /> Stack Treemap
+      </button>
+      <button
+        className={viewMode === "call_graph" ? "active" : ""}
+        type="button"
+        role="tab"
+        aria-selected={viewMode === "call_graph"}
+        onClick={() => setViewMode("call_graph")}
+      >
+        <GitBranch size={15} /> Call Graph
+      </button>
+    </div>
   );
 }
 
@@ -683,6 +825,200 @@ function TreemapCanvas({
       {symbols.length === 0 ? <div className="empty">No symbols match the current filters.</div> : null}
     </>
   );
+}
+
+type FlowData = {
+  graphNode: GraphNode;
+  color: string;
+  selected: boolean;
+};
+type StackwiseFlowNode = FlowNode<FlowData, "stackwise">;
+
+const nodeTypes = { stackwise: StackwiseGraphNode };
+
+function CallGraphView({
+  report,
+  symbols,
+  rootId,
+  callerDepth,
+  calleeDepth,
+  edgeKinds,
+  selectedId,
+}: {
+  report: StackwiseReport;
+  symbols: SymbolReport[];
+  rootId: number | null;
+  callerDepth: number;
+  calleeDepth: number;
+  edgeKinds: ReadonlySet<EdgeKind>;
+  selectedId: number | null;
+}) {
+  const { setSelectedId } = useStackwiseStore();
+  const focused = useMemo(
+    () =>
+      buildFocusedCallGraph(report, symbols, {
+        rootId,
+        callerDepth,
+        calleeDepth,
+        maxNodes: 120,
+        edgeKinds,
+      }),
+    [calleeDepth, callerDepth, edgeKinds, report, rootId, symbols],
+  );
+  const { nodes, edges } = useMemo(
+    () => layoutFlowGraph(focused.nodes, focused.edges, report, selectedId),
+    [focused, report, selectedId],
+  );
+  const fitKey = useMemo(
+    () => `${focused.rootId}:${callerDepth}:${calleeDepth}:${[...edgeKinds].sort().join(",")}:${symbols.length}`,
+    [calleeDepth, callerDepth, edgeKinds, focused.rootId, symbols.length],
+  );
+  const initialFitMinZoom = nodes.length <= 6 ? 0.82 : nodes.length <= 24 ? 0.58 : 0.28;
+
+  if (focused.rootId == null) {
+    return <div className="empty">No symbols match the current filters.</div>;
+  }
+
+  return (
+    <div className="graphShell">
+      {focused.hiddenNodeCount > 0 ? (
+        <div className="graphNotice">{focused.hiddenNodeCount.toLocaleString()} connected symbols hidden by the graph size limit.</div>
+      ) : null}
+      <ReactFlow
+        key={fitKey}
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        fitView
+        fitViewOptions={{ padding: 0.14, minZoom: initialFitMinZoom, maxZoom: 1.04 }}
+        minZoom={0.2}
+        maxZoom={1.6}
+        nodesDraggable={false}
+        onNodeClick={(_, node) => {
+          const graphNode = node.data.graphNode;
+          if ("symbol" in graphNode) setSelectedId(graphNode.symbol.id);
+        }}
+      >
+        <Background color="#dce5ee" gap={22} />
+        <FlowControls showInteractive={false} />
+        {nodes.length > 8 ? <MiniMap pannable zoomable nodeStrokeWidth={2} /> : null}
+      </ReactFlow>
+    </div>
+  );
+}
+
+function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
+  const node = data.graphNode;
+  if (!("symbol" in node)) {
+    return (
+      <div className="callNode boundaryNode">
+        <Handle type="target" position={Position.Left} />
+        <strong>{node.label}</strong>
+        <span>{node.detail}</span>
+      </div>
+    );
+  }
+
+  const symbol = node.symbol;
+  const ownKnown = symbol.own_frame.bytes != null;
+  const worstKnown = symbol.worst_path.bytes != null;
+  return (
+    <div
+      className={`callNode symbolNode ${node.relation}${data.selected ? " selected" : ""}${node.activeStackStatus === "unknown" ? " unknown" : ""}`}
+      style={{ "--node-color": data.color } as CSSProperties}
+      title={symbol.demangled}
+    >
+      <Handle type="target" position={Position.Left} />
+      <Handle type="source" position={Position.Right} />
+      <div className="nodeTopline">
+        <span className="nodeRelation">{node.relation}</span>
+        <span className={`nodeStatus ${ownKnown ? "known" : "unknown"}`}>{ownKnown ? "known" : "unknown"}</span>
+      </div>
+      <strong>{shortSymbolName(symbol.demangled)}</strong>
+      <span className="nodeModule">{symbolCrate(symbol) ?? "unknown crate"}</span>
+      <div className="nodeMetrics">
+        <span><b>Own</b>{formatBytes(symbol.own_frame.bytes)}</span>
+        <span><b>Branch</b>{formatBytes(node.activeStackBytes)}</span>
+        <span><b>Worst</b>{worstKnown ? formatBytes(symbol.worst_path.bytes) : symbol.worst_path.status}</span>
+      </div>
+    </div>
+  );
+}
+
+function layoutFlowGraph(
+  graphNodes: GraphNode[],
+  graphEdges: ReturnType<typeof buildFocusedCallGraph>["edges"],
+  report: StackwiseReport,
+  selectedId: number | null,
+): { nodes: StackwiseFlowNode[]; edges: FlowEdge[] } {
+  const graph = new dagre.graphlib.Graph();
+  graph.setDefaultEdgeLabel(() => ({}));
+  graph.setGraph({ rankdir: "LR", ranksep: 96, nodesep: 34, marginx: 28, marginy: 28 });
+
+  const sizeById = new Map<string, { width: number; height: number }>();
+  for (const node of graphNodes) {
+    const size = "symbol" in node ? { width: 256, height: 132 } : { width: 160, height: 72 };
+    sizeById.set(node.id, size);
+    graph.setNode(node.id, size);
+  }
+  for (const edge of graphEdges) graph.setEdge(edge.source, edge.target);
+  dagre.layout(graph);
+
+  const nodes = graphNodes.map<StackwiseFlowNode>((graphNode) => {
+    const point = graph.node(graphNode.id) as { x: number; y: number } | undefined;
+    const size = sizeById.get(graphNode.id) ?? { width: 200, height: 100 };
+    const symbol = "symbol" in graphNode ? graphNode.symbol : null;
+    return {
+      id: graphNode.id,
+      type: "stackwise",
+      position: {
+        x: (point?.x ?? 0) - size.width / 2,
+        y: (point?.y ?? 0) - size.height / 2,
+      },
+      data: {
+        graphNode,
+        color: symbol ? groupColor(symbol, report) : "#64748b",
+        selected: symbol?.id === selectedId,
+      },
+      draggable: false,
+    };
+  });
+
+  const edges = graphEdges.map<FlowEdge>((edge) => ({
+    id: edge.id,
+    source: edge.source,
+    target: edge.target,
+    type: "smoothstep",
+    label: edge.kind === "tail_call" ? "tail" : edge.kind === "direct_call" ? "" : edgeKindShortLabel(edge.kind),
+    markerEnd: { type: MarkerType.ArrowClosed },
+    className: `callEdge ${edge.kind}`,
+  }));
+
+  return { nodes, edges };
+}
+
+function shortSymbolName(name: string): string {
+  const parts = name.split("::").filter(Boolean);
+  if (parts.length <= 2) return name;
+  return parts.slice(-2).join("::");
+}
+
+function edgeKindLabel(kind: EdgeKind): string {
+  return {
+    direct_call: "Direct calls add the callee frame on top of the caller frame.",
+    tail_call: "Tail calls reuse the caller frame and do not add another stack frame.",
+    indirect_call: "Indirect calls have an unresolved runtime target.",
+    external_call: "External calls point outside resolved symbols in this artifact.",
+  }[kind];
+}
+
+function edgeKindShortLabel(kind: EdgeKind): string {
+  return {
+    direct_call: "Direct",
+    tail_call: "Tail",
+    indirect_call: "Indirect",
+    external_call: "External",
+  }[kind];
 }
 
 function trim(text: string, max: number): string {

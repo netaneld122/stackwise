@@ -8,6 +8,7 @@ use std::thread;
 use anyhow::Context;
 use camino::Utf8PathBuf;
 use iced_x86::{Decoder, DecoderOptions, Formatter, NasmFormatter};
+use include_dir::{include_dir, Dir, File};
 use object::{Object, ObjectSection};
 use serde::Serialize;
 use stackwise_core::{SourceLocation, StackwiseReport, SymbolReport};
@@ -31,7 +32,6 @@ pub fn serve_report(report_path: Utf8PathBuf, open_browser: bool) -> anyhow::Res
         let url = request.url().to_owned();
 
         let response = match (method, url.as_str()) {
-            (Method::Get, "/") | (Method::Get, "/index.html") => html_response(INDEX_HTML),
             (Method::Get, "/report.json") | (Method::Get, "/api/report") => {
                 match fs::read(report_path.as_std_path()) {
                     Ok(data) => json_response(data),
@@ -54,6 +54,7 @@ pub fn serve_report(report_path: Utf8PathBuf, open_browser: bool) -> anyhow::Res
                     "editor integration is not enabled in this build".to_owned(),
                 )
             }
+            (Method::Get, url) => ui_asset_response(url),
             _ => text_response(StatusCode(404), "not found".to_owned()),
         };
 
@@ -64,10 +65,6 @@ pub fn serve_report(report_path: Utf8PathBuf, open_browser: bool) -> anyhow::Res
     Ok(())
 }
 
-fn html_response(text: &str) -> Response<std::io::Cursor<Vec<u8>>> {
-    Response::from_string(text.to_owned()).with_header(content_type("text/html; charset=utf-8"))
-}
-
 fn json_response(data: Vec<u8>) -> Response<std::io::Cursor<Vec<u8>>> {
     Response::from_data(data).with_header(content_type("application/json"))
 }
@@ -76,6 +73,53 @@ fn text_response(status: StatusCode, text: String) -> Response<std::io::Cursor<V
     Response::from_string(text)
         .with_status_code(status)
         .with_header(content_type("text/plain; charset=utf-8"))
+}
+
+fn ui_asset_response(url: &str) -> Response<std::io::Cursor<Vec<u8>>> {
+    let Some(path) = ui_asset_path(url) else {
+        return text_response(StatusCode(404), "not found".to_owned());
+    };
+    let Some(file) = UI_ASSETS.get_file(&path) else {
+        return text_response(StatusCode(404), "not found".to_owned());
+    };
+    asset_response(file)
+}
+
+fn ui_asset_path(url: &str) -> Option<String> {
+    let path = url.split('?').next().unwrap_or("/");
+    if path == "/" || path == "/index.html" {
+        return Some("index.html".to_owned());
+    }
+
+    let relative = path.trim_start_matches('/').replace('\\', "/");
+    if relative.is_empty()
+        || relative
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return None;
+    }
+    Some(relative)
+}
+
+fn asset_response(file: &File<'_>) -> Response<std::io::Cursor<Vec<u8>>> {
+    Response::from_data(file.contents().to_vec()).with_header(content_type(mime_for_path(
+        file.path().to_string_lossy().as_ref(),
+    )))
+}
+
+fn mime_for_path(path: &str) -> &'static str {
+    match Path::new(path).extension().and_then(|extension| extension.to_str()) {
+        Some("html") => "text/html; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("js") => "text/javascript; charset=utf-8",
+        Some("json") => "application/json",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("ico") => "image/x-icon",
+        Some("map") => "application/json",
+        _ => "application/octet-stream",
+    }
 }
 
 fn symbol_context_response(
@@ -555,11 +599,11 @@ fn content_type(value: &str) -> Header {
     Header::from_bytes("content-type", value).expect("static header is valid")
 }
 
-const INDEX_HTML: &str = include_str!("../assets/index.html");
+static UI_ASSETS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/assets/app");
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_rust_std_source_path_with_roots, rust_library_relative_path};
+    use super::{resolve_rust_std_source_path_with_roots, rust_library_relative_path, ui_asset_path};
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -605,6 +649,16 @@ mod tests {
 
         assert_eq!(resolved, source);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn maps_ui_asset_paths_without_traversal() {
+        assert_eq!(ui_asset_path("/"), Some("index.html".to_owned()));
+        assert_eq!(
+            ui_asset_path("/assets/index.js?cache=1"),
+            Some("assets/index.js".to_owned())
+        );
+        assert!(ui_asset_path("/assets/../secret").is_none());
     }
 
     fn unique_temp_dir() -> PathBuf {
