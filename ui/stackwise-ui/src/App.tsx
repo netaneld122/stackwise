@@ -173,7 +173,7 @@ function Shell({
     <div className="app" style={appStyle}>
       <header>
         <div className="brand">
-          <div className="mark" aria-hidden="true" />
+          <LogoMark />
           <h1>Stackwise</h1>
         </div>
         {toolbar}
@@ -195,6 +195,24 @@ function Shell({
       <section>{right}</section>
       <footer>{status}</footer>
     </div>
+  );
+}
+
+function LogoMark() {
+  return (
+    <svg className="mark" aria-hidden="true" viewBox="0 0 36 36" role="img">
+      <defs>
+        <linearGradient id="stackwiseMarkPrimary" x1="4" y1="4" x2="23" y2="23" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#12b89f" />
+          <stop offset="1" stopColor="#0f766e" />
+        </linearGradient>
+      </defs>
+      <rect className="markTile markTilePrimary" fill="url(#stackwiseMarkPrimary)" x="3" y="3" width="19" height="17" rx="4" />
+      <rect className="markTile markTileDark" x="24" y="3" width="9" height="17" rx="3.5" />
+      <rect className="markTile markTileSoft" x="3" y="23" width="10" height="10" rx="3" />
+      <rect className="markTile markTileAccent" x="15" y="23" width="7" height="10" rx="2.5" />
+      <rect className="markTile markTilePale" x="24" y="23" width="9" height="10" rx="3" />
+    </svg>
   );
 }
 
