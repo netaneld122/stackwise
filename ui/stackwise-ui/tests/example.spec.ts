@@ -65,7 +65,10 @@ test("renders the application shell", async ({ page }) => {
   await expect(page.getByText("Stackwise")).toBeVisible();
   await expect(page.locator("footer")).toContainText("2 symbols");
   await page.getByRole("tab", { name: "Call Graph" }).click();
+  await expect(page.getByRole("button", { name: "Pivot" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Who calls this?" })).toBeVisible();
   await expect(page.getByText("demo::main")).toBeVisible();
   await expect(page.getByText("demo::leaf")).toBeVisible();
-  await expect(page.getByText("Branch").first()).toBeVisible();
+  await expect(page.getByText("Cumulative").first()).toBeVisible();
+  await expect(page.getByText("+24 B")).toBeVisible();
 });

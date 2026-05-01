@@ -49,6 +49,15 @@ import {
 import { useStackwiseStore } from "./store";
 import { buildTreemap, type TreemapRect } from "./treemap";
 
+type GraphLayout = "TB" | "LR" | "RL" | "BT";
+
+const graphLayoutOptions: Array<{ value: GraphLayout; label: string }> = [
+  { value: "TB", label: "Top down" },
+  { value: "LR", label: "Left to right" },
+  { value: "RL", label: "Right to left" },
+  { value: "BT", label: "Bottom up" },
+];
+
 export function App() {
   const { report, setReport, query, setQuery, metric, setMetric, confidence, setConfidence } =
     useStackwiseStore();
@@ -107,15 +116,17 @@ function ReportView({ report }: { report: StackwiseReport }) {
     [report.symbols, query, confidence, includedSymbolIds],
   );
   const selected = selectedSymbol();
+  const visibleSymbolIds = useMemo(() => new Set(symbols.map((symbol) => symbol.id)), [symbols]);
   const [graphRootId, setGraphRootId] = useState<number | null>(null);
-  const [callerDepth, setCallerDepth] = useState(1);
+  const [callerDepth, setCallerDepth] = useState(0);
   const [calleeDepth, setCalleeDepth] = useState(4);
+  const [graphLayout, setGraphLayout] = useState<GraphLayout>("TB");
   const [edgeKinds, setEdgeKinds] = useState<Set<EdgeKind>>(
     () => new Set(["direct_call", "tail_call", "indirect_call", "external_call"]),
   );
+  const canPivotToSelected = selected != null && visibleSymbolIds.has(selected.id);
   const status = `${report.artifact.file_name} | ${report.summary.symbol_count} symbols | ${report.summary.known_frame_count} known | ${report.summary.unknown_frame_count} unknown`;
   const primaryCrate = primaryCrateName(report);
-  const visibleSymbolIds = useMemo(() => new Set(symbols.map((symbol) => symbol.id)), [symbols]);
   const defaultGraphRoot = useMemo(
     () => chooseDefaultRoot(report, symbols, selected?.id ?? null),
     [report, symbols, selected?.id],
@@ -168,11 +179,38 @@ function ReportView({ report }: { report: StackwiseReport }) {
               <div className="graphToolbar" aria-label="Call graph controls">
                 <button
                   type="button"
-                  disabled={!selected || !visibleSymbolIds.has(selected.id)}
+                  disabled={!canPivotToSelected}
                   onClick={() => selected && setGraphRootId(selected.id)}
+                  title="Make the selected symbol the center of the call graph."
                 >
-                  <RotateCcw size={14} /> Use selected
+                  <RotateCcw size={14} /> Pivot
                 </button>
+                <button
+                  type="button"
+                  disabled={!canPivotToSelected}
+                  onClick={() => {
+                    if (!selected) return;
+                    setGraphRootId(selected.id);
+                    setCallerDepth(3);
+                    setCalleeDepth(0);
+                    setGraphLayout("TB");
+                  }}
+                  title="Show incoming callers for the selected symbol."
+                >
+                  <GitBranch size={14} /> Who calls this?
+                </button>
+                <label>
+                  Layout
+                  <select
+                    className="graphLayoutSelect"
+                    value={graphLayout}
+                    onChange={(event) => setGraphLayout(event.target.value as GraphLayout)}
+                  >
+                    {graphLayoutOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
                 <label>
                   Callers
                   <select value={callerDepth} onChange={(event) => setCallerDepth(Number(event.target.value))}>
@@ -182,7 +220,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
                 <label>
                   Callees
                   <select value={calleeDepth} onChange={(event) => setCalleeDepth(Number(event.target.value))}>
-                    {[1, 2, 3, 4, 5, 6].map((value) => <option key={value} value={value}>{value}</option>)}
+                    {[0, 1, 2, 3, 4, 5, 6].map((value) => <option key={value} value={value}>{value}</option>)}
                   </select>
                 </label>
                 <div className="edgeToggles" aria-label="Call edge filters">
@@ -229,6 +267,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
           callerDepth={callerDepth}
           calleeDepth={calleeDepth}
           edgeKinds={edgeKinds}
+          layout={graphLayout}
           selectedId={selectedId}
         />
       )}
@@ -759,6 +798,19 @@ function TreemapCanvas({
   const ref = useRef<HTMLCanvasElement>(null);
   const { setSelectedId } = useStackwiseStore();
   const rectsRef = useRef<TreemapRect[]>([]);
+  const [hovered, setHovered] = useState<{ symbol: SymbolReport; x: number; y: number } | null>(null);
+
+  const hitTest = (event: { clientX: number; clientY: number; currentTarget: HTMLCanvasElement }): TreemapRect | null => {
+    const canvas = ref.current;
+    if (!canvas) return null;
+    const bounds = canvas.getBoundingClientRect();
+    const ratio = window.devicePixelRatio || 1;
+    const x = (event.clientX - bounds.left) * ratio;
+    const y = (event.clientY - bounds.top) * ratio;
+    return rectsRef.current.find(
+      (item) => x >= item.x && x <= item.x + item.width && y >= item.y && y <= item.y + item.height,
+    ) ?? null;
+  };
 
   useEffect(() => {
     const canvas = ref.current;
@@ -806,30 +858,50 @@ function TreemapCanvas({
   }, [report, symbols, metric, selectedId]);
 
   return (
-    <>
+    <div className="treemapShell">
       <canvas
         ref={ref}
+        onPointerMove={(event) => {
+          const rect = hitTest(event);
+          if (!rect) {
+            setHovered(null);
+            return;
+          }
+
+          const bounds = event.currentTarget.getBoundingClientRect();
+          setHovered({
+            symbol: rect.symbol,
+            x: event.clientX - bounds.left,
+            y: event.clientY - bounds.top,
+          });
+        }}
+        onPointerLeave={() => setHovered(null)}
         onClick={(event) => {
-          const canvas = ref.current;
-          if (!canvas) return;
-          const bounds = canvas.getBoundingClientRect();
-          const ratio = window.devicePixelRatio || 1;
-          const x = (event.clientX - bounds.left) * ratio;
-          const y = (event.clientY - bounds.top) * ratio;
-          const rect = rectsRef.current.find(
-            (item) => x >= item.x && x <= item.x + item.width && y >= item.y && y <= item.y + item.height,
-          );
+          const rect = hitTest(event);
           setSelectedId(rect?.symbol.id ?? null);
         }}
       />
+      {hovered ? (
+        <div
+          className="treemapTooltip"
+          style={{
+            left: Math.min(hovered.x + 14, Math.max(14, (ref.current?.clientWidth ?? 0) - 300)),
+            top: Math.min(hovered.y + 14, Math.max(14, (ref.current?.clientHeight ?? 0) - 80)),
+          }}
+        >
+          <strong>{shortSymbolName(hovered.symbol.demangled)}</strong>
+          <span>{symbolCrate(hovered.symbol) ?? "unknown crate"} · own {formatBytes(hovered.symbol.own_frame.bytes)}</span>
+        </div>
+      ) : null}
       {symbols.length === 0 ? <div className="empty">No symbols match the current filters.</div> : null}
-    </>
+    </div>
   );
 }
 
 type FlowData = {
   graphNode: GraphNode;
   color: string;
+  layout: GraphLayout;
   selected: boolean;
 };
 type StackwiseFlowNode = FlowNode<FlowData, "stackwise">;
@@ -843,6 +915,7 @@ function CallGraphView({
   callerDepth,
   calleeDepth,
   edgeKinds,
+  layout,
   selectedId,
 }: {
   report: StackwiseReport;
@@ -851,6 +924,7 @@ function CallGraphView({
   callerDepth: number;
   calleeDepth: number;
   edgeKinds: ReadonlySet<EdgeKind>;
+  layout: GraphLayout;
   selectedId: number | null;
 }) {
   const { setSelectedId } = useStackwiseStore();
@@ -866,12 +940,12 @@ function CallGraphView({
     [calleeDepth, callerDepth, edgeKinds, report, rootId, symbols],
   );
   const { nodes, edges } = useMemo(
-    () => layoutFlowGraph(focused.nodes, focused.edges, report, selectedId),
-    [focused, report, selectedId],
+    () => layoutFlowGraph(focused.nodes, focused.edges, report, selectedId, layout),
+    [focused, layout, report, selectedId],
   );
   const fitKey = useMemo(
-    () => `${focused.rootId}:${callerDepth}:${calleeDepth}:${[...edgeKinds].sort().join(",")}:${symbols.length}`,
-    [calleeDepth, callerDepth, edgeKinds, focused.rootId, symbols.length],
+    () => `${focused.rootId}:${layout}:${callerDepth}:${calleeDepth}:${[...edgeKinds].sort().join(",")}:${symbols.length}`,
+    [calleeDepth, callerDepth, edgeKinds, focused.rootId, layout, symbols.length],
   );
   const initialFitMinZoom = nodes.length <= 6 ? 0.82 : nodes.length <= 24 ? 0.58 : 0.28;
 
@@ -909,10 +983,11 @@ function CallGraphView({
 
 function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
   const node = data.graphNode;
+  const handles = handlePositions(data.layout);
   if (!("symbol" in node)) {
     return (
       <div className="callNode boundaryNode">
-        <Handle type="target" position={Position.Left} />
+        <Handle type="target" position={handles.target} />
         <strong>{node.label}</strong>
         <span>{node.detail}</span>
       </div>
@@ -924,12 +999,12 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
   const worstKnown = symbol.worst_path.bytes != null;
   return (
     <div
-      className={`callNode symbolNode ${node.relation}${data.selected ? " selected" : ""}${node.activeStackStatus === "unknown" ? " unknown" : ""}`}
+      className={`callNode symbolNode ${node.relation}${data.selected ? " selected" : ""}${node.cumulativeStackStatus === "unknown" ? " unknown" : ""}`}
       style={{ "--node-color": data.color } as CSSProperties}
       title={symbol.demangled}
     >
-      <Handle type="target" position={Position.Left} />
-      <Handle type="source" position={Position.Right} />
+      <Handle type="target" position={handles.target} />
+      <Handle type="source" position={handles.source} />
       <div className="nodeTopline">
         <span className="nodeRelation">{node.relation}</span>
         <span className={`nodeStatus ${ownKnown ? "known" : "unknown"}`}>{ownKnown ? "known" : "unknown"}</span>
@@ -938,7 +1013,7 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
       <span className="nodeModule">{symbolCrate(symbol) ?? "unknown crate"}</span>
       <div className="nodeMetrics">
         <span><b>Own</b>{formatBytes(symbol.own_frame.bytes)}</span>
-        <span><b>Branch</b>{formatBytes(node.activeStackBytes)}</span>
+        <span><b>Cumulative</b>{formatBytes(node.cumulativeStackBytes)}</span>
         <span><b>Worst</b>{worstKnown ? formatBytes(symbol.worst_path.bytes) : symbol.worst_path.status}</span>
       </div>
     </div>
@@ -950,14 +1025,15 @@ function layoutFlowGraph(
   graphEdges: ReturnType<typeof buildFocusedCallGraph>["edges"],
   report: StackwiseReport,
   selectedId: number | null,
+  layout: GraphLayout,
 ): { nodes: StackwiseFlowNode[]; edges: FlowEdge[] } {
   const graph = new dagre.graphlib.Graph();
   graph.setDefaultEdgeLabel(() => ({}));
-  graph.setGraph({ rankdir: "LR", ranksep: 96, nodesep: 34, marginx: 28, marginy: 28 });
+  graph.setGraph(layoutGraphOptions(layout));
 
   const sizeById = new Map<string, { width: number; height: number }>();
   for (const node of graphNodes) {
-    const size = "symbol" in node ? { width: 256, height: 132 } : { width: 160, height: 72 };
+    const size = "symbol" in node ? { width: 278, height: 142 } : { width: 160, height: 72 };
     sizeById.set(node.id, size);
     graph.setNode(node.id, size);
   }
@@ -978,6 +1054,7 @@ function layoutFlowGraph(
       data: {
         graphNode,
         color: symbol ? groupColor(symbol, report) : "#64748b",
+        layout,
         selected: symbol?.id === selectedId,
       },
       draggable: false,
@@ -989,7 +1066,7 @@ function layoutFlowGraph(
     source: edge.source,
     target: edge.target,
     type: "smoothstep",
-    label: edge.kind === "tail_call" ? "tail" : edge.kind === "direct_call" ? "" : edgeKindShortLabel(edge.kind),
+    label: graphEdgeLabel(edge),
     markerEnd: { type: MarkerType.ArrowClosed },
     className: `callEdge ${edge.kind}`,
   }));
@@ -1001,6 +1078,33 @@ function shortSymbolName(name: string): string {
   const parts = name.split("::").filter(Boolean);
   if (parts.length <= 2) return name;
   return parts.slice(-2).join("::");
+}
+
+function layoutGraphOptions(layout: GraphLayout) {
+  const vertical = layout === "TB" || layout === "BT";
+  return {
+    rankdir: layout,
+    ranksep: vertical ? 86 : 104,
+    nodesep: vertical ? 42 : 34,
+    marginx: 32,
+    marginy: 32,
+  };
+}
+
+function handlePositions(layout: GraphLayout): { target: Position; source: Position } {
+  return {
+    TB: { target: Position.Top, source: Position.Bottom },
+    BT: { target: Position.Bottom, source: Position.Top },
+    LR: { target: Position.Left, source: Position.Right },
+    RL: { target: Position.Right, source: Position.Left },
+  }[layout];
+}
+
+function graphEdgeLabel(edge: ReturnType<typeof buildFocusedCallGraph>["edges"][number]): string {
+  const delta = edge.addedStackBytes == null ? null : `+${formatBytes(edge.addedStackBytes)}`;
+  if (edge.kind === "tail_call") return delta ? `${delta} tail` : "tail";
+  if (edge.kind === "direct_call") return delta ?? "unknown";
+  return edgeKindShortLabel(edge.kind);
 }
 
 function edgeKindLabel(kind: EdgeKind): string {

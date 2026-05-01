@@ -16,8 +16,8 @@ export interface GraphSymbolNode {
   symbol: SymbolReport;
   relation: GraphRelation;
   depth: number;
-  activeStackBytes: number | null;
-  activeStackStatus: GraphStackStatus;
+  cumulativeStackBytes: number | null;
+  cumulativeStackStatus: GraphStackStatus;
 }
 
 export interface GraphBoundaryNode {
@@ -36,6 +36,8 @@ export interface GraphEdge {
   target: string;
   kind: EdgeKind;
   confidence: string;
+  addedStackBytes: number | null;
+  addedStackStatus: GraphStackStatus;
 }
 
 export interface FocusedCallGraph {
@@ -123,6 +125,8 @@ export function buildFocusedCallGraph(
       target,
       kind: edge.kind,
       confidence: edge.confidence,
+      addedStackBytes: null,
+      addedStackStatus: "unknown",
     });
   };
 
@@ -139,7 +143,7 @@ export function buildFocusedCallGraph(
     return true;
   });
 
-  const stackById = computeBranchStacks(rootId, nodeIds, index);
+  const stackById = computeCumulativeStacks(rootId, nodeIds, relationById, depthById, index, options.edgeKinds);
   const nodes: GraphNode[] = [...nodeIds].map((id) => {
     const symbol = index.byId.get(id)!;
     const stack = stackById.get(id) ?? { bytes: null, status: "unknown" as GraphStackStatus };
@@ -148,8 +152,8 @@ export function buildFocusedCallGraph(
       symbol,
       relation: relationById.get(id) ?? "callee",
       depth: depthById.get(id) ?? 0,
-      activeStackBytes: stack.bytes,
-      activeStackStatus: stack.status,
+      cumulativeStackBytes: stack.bytes,
+      cumulativeStackStatus: stack.status,
     };
   });
 
@@ -169,7 +173,7 @@ export function buildFocusedCallGraph(
   return {
     rootId,
     nodes,
-    edges: [...graphEdges.values()],
+    edges: [...graphEdges.values()].map((edge) => withStackDelta(edge, index, stackById)),
     hiddenNodeCount,
   };
 }
@@ -236,31 +240,35 @@ function walkCallees(
   }
 }
 
-function computeBranchStacks(rootId: number, nodeIds: ReadonlySet<number>, index: GraphIndex) {
+function computeCumulativeStacks(
+  rootId: number,
+  nodeIds: ReadonlySet<number>,
+  relationById: ReadonlyMap<number, GraphRelation>,
+  depthById: ReadonlyMap<number, number>,
+  index: GraphIndex,
+  edgeKinds: ReadonlySet<EdgeKind>,
+) {
   const stackById = new Map<number, { bytes: number | null; status: GraphStackStatus }>();
   const root = index.byId.get(rootId);
   if (!root) return stackById;
   stackById.set(rootId, ownStack(root));
 
-  for (let pass = 0; pass < nodeIds.size; pass += 1) {
-    let changed = false;
-    for (const id of nodeIds) {
-      const current = stackById.get(id);
-      if (!current) continue;
-      for (const edge of index.outgoing.get(id) ?? []) {
-        if (edge.callee == null || !nodeIds.has(edge.callee)) continue;
-        const callee = index.byId.get(edge.callee);
-        if (!callee) continue;
-        changed = updateStack(stackById, edge.callee, combineStacks(current, ownStack(callee), edge.kind)) || changed;
-      }
-      for (const edge of index.incoming.get(id) ?? []) {
-        if (!nodeIds.has(edge.caller)) continue;
-        const caller = index.byId.get(edge.caller);
-        if (!caller) continue;
-        changed = updateStack(stackById, edge.caller, combineStacks(ownStack(caller), current, edge.kind)) || changed;
-      }
+  const orderedIds = [...nodeIds].sort((left, right) => (depthById.get(left) ?? 0) - (depthById.get(right) ?? 0));
+  for (const id of orderedIds) {
+    if (relationById.get(id) === "caller") continue;
+    const current = stackById.get(id);
+    if (!current) continue;
+
+    for (const edge of index.outgoing.get(id) ?? []) {
+      if (!edgeKinds.has(edge.kind) || edge.callee == null || !nodeIds.has(edge.callee)) continue;
+      if (relationById.get(edge.callee) === "caller") continue;
+      if ((depthById.get(edge.callee) ?? 0) <= (depthById.get(id) ?? 0)) continue;
+
+      const caller = index.byId.get(id);
+      const callee = index.byId.get(edge.callee);
+      if (!caller || !callee) continue;
+      updateStack(stackById, edge.callee, combineStacks(current, ownStack(caller), ownStack(callee), edge.kind));
     }
-    if (!changed) break;
   }
 
   return stackById;
@@ -273,13 +281,22 @@ function ownStack(symbol: SymbolReport): { bytes: number | null; status: GraphSt
 }
 
 function combineStacks(
-  left: { bytes: number | null; status: GraphStackStatus },
-  right: { bytes: number | null; status: GraphStackStatus },
+  active: { bytes: number | null; status: GraphStackStatus },
+  callerOwn: { bytes: number | null; status: GraphStackStatus },
+  calleeOwn: { bytes: number | null; status: GraphStackStatus },
   kind: EdgeKind,
 ): { bytes: number | null; status: GraphStackStatus } {
-  if (left.bytes == null || right.bytes == null) return { bytes: null, status: "unknown" };
+  if (active.bytes == null || calleeOwn.bytes == null) return { bytes: null, status: "unknown" };
+  if (kind === "tail_call") {
+    if (callerOwn.bytes == null) return { bytes: null, status: "unknown" };
+    return {
+      bytes: active.bytes - callerOwn.bytes + Math.max(callerOwn.bytes, calleeOwn.bytes),
+      status: "known",
+    };
+  }
+
   return {
-    bytes: kind === "tail_call" ? Math.max(left.bytes, right.bytes) : left.bytes + right.bytes,
+    bytes: active.bytes + calleeOwn.bytes,
     status: "known",
   };
 }
@@ -294,6 +311,49 @@ function updateStack(
   if (current?.bytes == null && next.bytes == null) return false;
   stacks.set(id, next);
   return true;
+}
+
+function withStackDelta(
+  edge: GraphEdge,
+  index: GraphIndex,
+  stacks: ReadonlyMap<number, { bytes: number | null; status: GraphStackStatus }>,
+): GraphEdge {
+  const targetId = symbolIdFromNodeId(edge.target);
+  const sourceId = symbolIdFromNodeId(edge.source);
+  if (targetId == null) return edge;
+
+  const target = index.byId.get(targetId);
+  const targetOwn = target ? ownStack(target) : { bytes: null, status: "unknown" as GraphStackStatus };
+  if (targetOwn.bytes == null) return edge;
+
+  if (edge.kind === "tail_call") {
+    const sourceStack = sourceId == null ? null : stacks.get(sourceId);
+    const targetStack = stacks.get(targetId);
+    const added = sourceStack?.bytes == null || targetStack?.bytes == null
+      ? null
+      : Math.max(0, targetStack.bytes - sourceStack.bytes);
+    return {
+      ...edge,
+      addedStackBytes: added,
+      addedStackStatus: added == null ? "unknown" : "known",
+    };
+  }
+
+  if (edge.kind === "direct_call") {
+    return {
+      ...edge,
+      addedStackBytes: targetOwn.bytes,
+      addedStackStatus: "known",
+    };
+  }
+
+  return edge;
+}
+
+function symbolIdFromNodeId(id: string): number | null {
+  if (!id.startsWith(SYMBOL_PREFIX)) return null;
+  const parsed = Number(id.slice(SYMBOL_PREFIX.length));
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function boundaryNode(edge: EdgeReport, ownerId: number): GraphBoundaryNode {

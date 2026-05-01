@@ -42,7 +42,47 @@ describe("call graph helpers", () => {
     });
 
     const tail = graph.nodes.find((node) => node.id === "s:1");
-    expect(tail && "activeStackBytes" in tail ? tail.activeStackBytes : null).toBe(128);
+    expect(tail && "cumulativeStackBytes" in tail ? tail.cumulativeStackBytes : null).toBe(128);
+    expect(graph.edges[0].addedStackBytes).toBe(64);
+  });
+
+  it("labels direct call deltas with the callee frame", () => {
+    const symbols = [symbol(0, "demo::main", 16), symbol(1, "demo::leaf", 32)];
+    const report = reportWith(symbols, [edge(0, 1, "direct_call")]);
+
+    const graph = buildFocusedCallGraph(report, symbols, {
+      rootId: 0,
+      callerDepth: 0,
+      calleeDepth: 1,
+      maxNodes: 20,
+      edgeKinds: allEdges,
+    });
+
+    const leaf = graph.nodes.find((node) => node.id === "s:1");
+    expect(leaf && "cumulativeStackBytes" in leaf ? leaf.cumulativeStackBytes : null).toBe(48);
+    expect(graph.edges[0].addedStackBytes).toBe(32);
+  });
+
+  it("labels nested tail-call deltas from cumulative stack growth", () => {
+    const symbols = [
+      symbol(0, "demo::main", 16),
+      symbol(1, "demo::parent", 32),
+      symbol(2, "demo::leaf", 64),
+    ];
+    const report = reportWith(symbols, [edge(0, 1, "direct_call"), edge(1, 2, "tail_call")]);
+
+    const graph = buildFocusedCallGraph(report, symbols, {
+      rootId: 0,
+      callerDepth: 0,
+      calleeDepth: 2,
+      maxNodes: 20,
+      edgeKinds: allEdges,
+    });
+
+    const leaf = graph.nodes.find((node) => node.id === "s:2");
+    const tailEdge = graph.edges.find((edge) => edge.kind === "tail_call");
+    expect(leaf && "cumulativeStackBytes" in leaf ? leaf.cumulativeStackBytes : null).toBe(80);
+    expect(tailEdge?.addedStackBytes).toBe(32);
   });
 });
 

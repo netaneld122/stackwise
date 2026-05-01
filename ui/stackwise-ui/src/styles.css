@@ -149,6 +149,44 @@ canvas {
   height: 100%;
 }
 
+.treemapShell {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.treemapTooltip {
+  position: absolute;
+  z-index: 5;
+  display: grid;
+  max-width: 280px;
+  gap: 3px;
+  pointer-events: none;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.14);
+  color: #172033;
+  backdrop-filter: blur(10px);
+}
+
+.treemapTooltip strong,
+.treemapTooltip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.treemapTooltip strong {
+  font-size: 12px;
+}
+
+.treemapTooltip span {
+  color: #667085;
+  font-size: 11px;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -252,6 +290,11 @@ canvas {
 .graphToolbar select {
   width: 58px;
   min-width: 58px;
+}
+
+.graphToolbar .graphLayoutSelect {
+  width: 116px;
+  min-width: 116px;
 }
 
 .edgeToggles {
@@ -708,8 +751,8 @@ dd {
 }
 
 .symbolNode {
-  width: 256px;
-  min-height: 132px;
+  width: 278px;
+  min-height: 142px;
   border-left: 5px solid var(--node-color);
   padding: 10px 11px 9px;
 }
