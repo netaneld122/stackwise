@@ -244,6 +244,7 @@ function ModuleList({
         {visibleNodes.map((node) => {
           const selection = moduleSelectionState(node, activeSymbolIds);
           const hasChildren = node.children.length > 0;
+          const expanded = expandedModules.has(node.key);
           return (
             <div
               className={`moduleRow${selection === "checked" ? " active" : ""}${selection === "mixed" ? " mixed" : ""}`}
@@ -258,18 +259,19 @@ function ModuleList({
                 }
               }}
             >
-              <div className="moduleLine" style={{ "--depth": node.depth } as CSSProperties}>
+              <div className="moduleLine" style={{ "--indent": `${node.depth * 16}px` } as CSSProperties}>
                 <button
                   type="button"
-                  className={`treeToggle${hasChildren ? "" : " placeholder"}`}
-                  aria-label={`${expandedModules.has(node.key) ? "Collapse" : "Expand"} ${node.path}`}
+                  className={`treeToggle${hasChildren ? "" : " placeholder"}${expanded ? " expanded" : ""}`}
+                  aria-label={`${expanded ? "Collapse" : "Expand"} ${node.path}`}
+                  aria-expanded={hasChildren ? expanded : false}
                   onClick={(event) => {
                     event.stopPropagation();
                     toggleExpanded(node);
                   }}
                   disabled={!hasChildren}
                 >
-                  {hasChildren ? (expandedModules.has(node.key) ? "v" : ">") : ">"}
+                  <span className="chevronIcon" aria-hidden="true" />
                 </button>
                 <input
                   ref={(input) => {

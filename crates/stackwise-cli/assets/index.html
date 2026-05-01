@@ -288,36 +288,71 @@
       }
 
       .treeRow {
+        position: relative;
+        overflow: hidden;
+        min-height: 38px;
         width: 100%;
-        border: 1px solid #e1e7ef;
+        border: 1px solid rgba(215, 222, 232, 0.88);
         border-radius: 8px;
-        background: #fbfcfe;
+        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
         color: inherit;
         cursor: pointer;
-        transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.68);
+        transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
+      }
+
+      .treeRow::before {
+        content: "";
+        position: absolute;
+        inset: 7px auto 7px 0;
+        width: 3px;
+        border-radius: 0 999px 999px 0;
+        background: transparent;
+        transition: background 0.12s ease;
       }
 
       .treeLine {
+        position: relative;
         display: flex;
         min-height: 38px;
         min-width: 0;
         align-items: center;
-        gap: 7px;
-        padding: 6px 8px 6px calc(8px + var(--depth) * 14px);
+        gap: 8px;
+        padding: 6px 8px 6px calc(9px + var(--indent, 0px));
       }
 
       .treeToggle {
-        width: 22px;
-        height: 22px;
+        display: grid;
+        width: 24px;
+        height: 24px;
         flex: 0 0 auto;
-        border-color: transparent;
-        background: transparent;
+        place-items: center;
+        border: 1px solid transparent;
+        border-radius: 7px;
+        background: rgba(238, 242, 247, 0.76);
         padding: 0;
         color: #667085;
+        transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
       }
 
       .treeToggle:hover:not(:disabled) {
-        background: #eef6f5;
+        border-color: rgba(15, 118, 110, 0.18);
+        background: #e6f5f2;
+        color: #0f766e;
+      }
+
+      .chevronIcon {
+        width: 7px;
+        height: 7px;
+        border-right: 1.8px solid currentColor;
+        border-bottom: 1.8px solid currentColor;
+        transform: rotate(-45deg);
+        transform-origin: 55% 55%;
+        transition: transform 0.16s ease;
+      }
+
+      .treeToggle.expanded .chevronIcon {
+        transform: rotate(45deg);
       }
 
       .treeToggle.placeholder {
@@ -335,12 +370,25 @@
       .treeRow:hover,
       .treeRow.active {
         border-color: rgba(15, 118, 110, 0.45);
-        background: #ffffff;
+        background: linear-gradient(180deg, #ffffff 0%, #f5fbfa 100%);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.92), 0 8px 18px rgba(15, 23, 42, 0.05);
+      }
+
+      .treeRow:hover {
+        transform: translateY(-1px);
+      }
+
+      .treeRow.active::before {
+        background: var(--accent);
       }
 
       .treeRow.mixed {
         border-color: rgba(217, 119, 6, 0.36);
-        background: #fffdf7;
+        background: linear-gradient(180deg, #ffffff 0%, #fffaf0 100%);
+      }
+
+      .treeRow.mixed::before {
+        background: var(--amber);
       }
 
       .treeRow strong,
@@ -1041,10 +1089,11 @@
           const selection = moduleSelectionState(node, activeSymbolIds);
           const el = document.createElement("div");
           const hasChildren = node.children.length > 0;
+          const expanded = state.expandedModules.has(node.key);
           el.className = `treeRow${selection === "checked" ? " active" : ""}${selection === "mixed" ? " mixed" : ""}`;
           el.innerHTML = `
-            <div class="treeLine" style="--depth:${node.depth}">
-              <button class="treeToggle${hasChildren ? "" : " placeholder"}" type="button" aria-label="${state.expandedModules.has(node.key) ? "Collapse" : "Expand"} ${escapeHtml(node.path)}" data-module-toggle="${escapeHtml(node.key)}">${hasChildren ? (state.expandedModules.has(node.key) ? "v" : ">") : ">"}</button>
+            <div class="treeLine" style="--indent:${node.depth * 16}px">
+              <button class="treeToggle${hasChildren ? "" : " placeholder"}${expanded ? " expanded" : ""}" type="button" aria-label="${expanded ? "Collapse" : "Expand"} ${escapeHtml(node.path)}" data-module-toggle="${escapeHtml(node.key)}" aria-expanded="${hasChildren ? String(expanded) : "false"}"><span class="chevronIcon" aria-hidden="true"></span></button>
               <input type="checkbox" ${selection === "checked" ? "checked" : ""} data-module-key="${escapeHtml(node.key)}" />
               <span class="treeText" title="${escapeHtml(node.path)}">
                 <span class="swatch" style="background:${node.color}"></span>
