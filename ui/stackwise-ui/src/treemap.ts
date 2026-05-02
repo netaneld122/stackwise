@@ -39,9 +39,12 @@ export function buildTreemap(
 
   applyPrimaryGroupFloor([...groups.values()]);
 
+  const children = [...groups.values()];
+  if (children.length === 0) return [];
+
   const rootNode: TreeNode = {
     name: "root",
-    children: [...groups.values()],
+    children,
   };
 
   const root = hierarchy(rootNode)
@@ -59,6 +62,7 @@ export function buildTreemap(
 
   return laidOut
     .leaves()
+    .filter((node: HierarchyRectangularNode<TreeNode>) => node.data.symbol)
     .map((node: HierarchyRectangularNode<TreeNode>) => ({
       symbol: node.data.symbol!,
       x: node.x0,

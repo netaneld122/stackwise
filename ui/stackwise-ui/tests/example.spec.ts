@@ -252,3 +252,74 @@ test("renders call graph minimap nodes for larger reports", async ({ page }) => 
   await expect(page.locator(".callGraphMiniMap title")).toHaveText("Call graph minimap");
   await expect.poll(async () => page.locator(".callGraphMiniMap .react-flow__minimap-node").count()).toBeGreaterThan(8);
 });
+
+test("unknown-only filtering does not crash the treemap", async ({ page }) => {
+  await page.route("/report.json", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        schema_version: "0.1.0",
+        generator: { name: "stackwise", version: "0.1.0" },
+        artifact: {
+          path: "demo",
+          file_name: "demo",
+          format: "elf",
+          architecture: "x86_64",
+          pointer_width: 64,
+          size_bytes: 100,
+        },
+        summary: {
+          symbol_count: 2,
+          edge_count: 0,
+          known_frame_count: 1,
+          unknown_frame_count: 1,
+          recursive_symbol_count: 0,
+          indirect_edge_count: 0,
+          max_own_frame: { symbol_id: 0, bytes: 16, demangled: "demo::known" },
+          max_worst_path: { symbol_id: 0, bytes: 16, demangled: "demo::known" },
+          confidence: "medium",
+        },
+        symbols: [
+          {
+            id: 0,
+            name: "demo::known",
+            demangled: "demo::known",
+            crate_name: "demo",
+            module_path: ["demo"],
+            address: 1,
+            size_bytes: 10,
+            own_frame: { bytes: 16, status: "known", evidence_source: "elf_stack_sizes" },
+            worst_path: { bytes: 16, status: "known", path: [0] },
+            confidence: "exact",
+            evidence: [],
+            unresolved_reasons: [],
+          },
+          {
+            id: 1,
+            name: "demo::unknown",
+            demangled: "demo::unknown",
+            crate_name: "demo",
+            module_path: ["demo"],
+            address: 2,
+            size_bytes: 10,
+            own_frame: { bytes: null, status: "unknown", evidence_source: "symbol_only" },
+            worst_path: { bytes: null, status: "unknown", path: [1] },
+            confidence: "unknown",
+            evidence: [],
+            unresolved_reasons: ["missing_stack_evidence"],
+          },
+        ],
+        edges: [],
+        groups: [{ id: 0, name: "demo", parent: null, symbol_ids: [0, 1], own_frame_sum: 16, worst_path_max: 16 }],
+        diagnostics: [],
+      }),
+    });
+  });
+
+  await page.goto("/");
+  const confidenceSelect = page.locator(".controls > select");
+  await expect(confidenceSelect).toHaveCount(1);
+  await confidenceSelect.selectOption("unknown");
+  await expect(page.getByText("Stackwise")).toBeVisible();
+  await expect(page.getByText("No positive own-frame values match the current filters.")).toBeVisible();
+});

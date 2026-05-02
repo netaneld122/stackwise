@@ -843,6 +843,7 @@ function TreemapCanvas({
   const { setSelectedId } = useStackwiseStore();
   const rectsRef = useRef<TreemapRect[]>([]);
   const [hovered, setHovered] = useState<{ symbol: SymbolReport; x: number; y: number } | null>(null);
+  const [hasRects, setHasRects] = useState(true);
 
   const hitTest = (event: { clientX: number; clientY: number; currentTarget: HTMLCanvasElement }): TreemapRect | null => {
     const canvas = ref.current;
@@ -871,6 +872,8 @@ function TreemapCanvas({
       context.clearRect(0, 0, canvas.width, canvas.height);
       const rects = buildTreemap(symbols, metric, canvas.width, canvas.height, report);
       rectsRef.current = rects;
+      const nextHasRects = rects.length > 0;
+      setHasRects((current) => (current === nextHasRects ? current : nextHasRects));
 
       for (const rect of rects) {
         const fill = groupColor(rect.symbol, report);
@@ -938,8 +941,20 @@ function TreemapCanvas({
         </div>
       ) : null}
       {symbols.length === 0 ? <div className="empty">No symbols match the current filters.</div> : null}
+      {symbols.length > 0 && !hasRects ? (
+        <div className="empty">No positive {metricLabel(metric)} values match the current filters.</div>
+      ) : null}
     </div>
   );
+}
+
+function metricLabel(metric: Metric): string {
+  return {
+    own: "own-frame",
+    worst: "worst-path",
+    code: "code-size",
+    risk: "unresolved-risk",
+  }[metric];
 }
 
 type FlowData = {
