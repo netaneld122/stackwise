@@ -448,6 +448,7 @@ canvas {
   color: var(--accent);
   font-size: 12px;
   font-weight: 800;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
 }
 
 .hiddenFileInput {
@@ -458,6 +459,18 @@ canvas {
   border-color: rgba(15, 118, 110, 0.35);
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+.openAnalysisButton:not(:disabled):hover,
+.openAnalysisButton:focus-visible {
+  border-color: rgba(15, 118, 110, 0.35);
+  background-color: var(--accent-hover);
+  color: var(--accent);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.openAnalysisButton:not(:disabled):active {
+  transform: translateY(1px);
 }
 
 .summaryChips {
@@ -492,12 +505,24 @@ canvas {
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
 }
 
 .viewTabs button.active {
   background: var(--tab-active-bg);
   color: var(--tab-active-ink);
   box-shadow: 0 6px 16px rgba(15, 23, 42, 0.14);
+}
+
+.viewTabs button:not(:disabled):hover,
+.viewTabs button:focus-visible {
+  background-color: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.viewTabs button:not(:disabled):active {
+  transform: translateY(1px);
 }
 
 .paneToolbar {
@@ -968,6 +993,20 @@ dd {
   padding: 0 8px;
   color: var(--tab-ink);
   font-size: 12px;
+  font-weight: 700;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
+}
+
+.copyBriefButton:not(:disabled):hover,
+.copyBriefButton:focus-visible {
+  border-color: rgba(15, 118, 110, 0.35);
+  background-color: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.copyBriefButton:not(:disabled):active {
+  transform: translateY(1px);
 }
 
 .agentButton {

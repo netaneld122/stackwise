@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Locator } from "@playwright/test";
 
 test("renders the application shell", async ({ page }) => {
   let agentRequest: unknown = null;
@@ -182,6 +182,7 @@ test("renders the application shell", async ({ page }) => {
   await expect(page.getByText("Stackwise")).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await expect(page.locator(".app")).toHaveAttribute("data-theme", "light");
+  await expectHoverAffordance(page.getByRole("button", { name: "Open analysis file" }));
   const themeToggle = page.getByRole("button", { name: "Switch to dark theme" });
   await expect(themeToggle).toContainText("Dark");
   await themeToggle.click();
@@ -204,12 +205,10 @@ test("renders the application shell", async ({ page }) => {
   await expect(page.locator(".paneToolbar").getByRole("combobox")).toHaveCount(2);
   const selectAllButton = page.getByRole("button", { name: "Select all", exact: true });
   const deselectAllButton = page.getByRole("button", { name: "Deselect all", exact: true });
-  await expect(selectAllButton).toBeVisible();
-  await expect(selectAllButton).toHaveCSS("cursor", "pointer");
+  await expectHoverAffordance(selectAllButton);
   await expect(deselectAllButton).toHaveCSS("cursor", "pointer");
-  const selectAllBackground = await selectAllButton.evaluate((node) => getComputedStyle(node).backgroundColor);
-  await selectAllButton.hover();
-  await expect(selectAllButton).not.toHaveCSS("background-color", selectAllBackground);
+  await expectHoverAffordance(page.getByRole("tab", { name: "Stack Treemap" }));
+  await expectHoverAffordance(page.getByRole("tab", { name: "Call Graph" }));
   const stdRow = page.getByRole("button", { name: "std 1 symbols" });
   const coreRow = page.getByRole("button", { name: "core 1 symbols" });
   const stdCheckbox = stdRow.getByRole("checkbox");
@@ -277,6 +276,7 @@ test("renders the application shell", async ({ page }) => {
   await page.getByRole("button", { name: "Generate markdown" }).click();
   await expect(page.getByRole("button", { name: "Send generated markdown to Claude" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Send generated markdown to Cursor" })).toBeVisible();
+  await expectHoverAffordance(page.getByRole("button", { name: "Copy" }));
   await page.getByRole("button", { name: "Send generated markdown to Codex" }).click();
   await expect(page.locator(".agentStatus.success")).toContainText("Started Codex");
   expect(agentRequest).toEqual({ agent: "codex", symbol_id: 1, brief_id: "brief-1" });
@@ -305,6 +305,15 @@ test("renders the application shell", async ({ page }) => {
   await expect(page.locator(".codeModal .tokMnemonic").filter({ hasText: "sub" })).toBeVisible();
   await expect(page.locator(".codeModal .tokRegister").filter({ hasText: "rsp" })).toBeVisible();
 });
+
+async function expectHoverAffordance(button: Locator) {
+  await expect(button).toBeVisible();
+  await expect(button).toHaveCSS("cursor", "pointer");
+  const backgroundBefore = await button.evaluate((node) => getComputedStyle(node).backgroundColor);
+  await button.hover();
+  await expect(button).not.toHaveCSS("background-color", backgroundBefore);
+  await expect(button).not.toHaveCSS("box-shadow", "none");
+}
 
 test("renders call graph minimap nodes for larger reports", async ({ page }) => {
   const symbols = Array.from({ length: 12 }, (_, id) => ({
