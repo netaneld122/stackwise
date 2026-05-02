@@ -49,6 +49,9 @@ pub fn serve_report(report_path: Utf8PathBuf, open_browser: bool) -> anyhow::Res
             (Method::Get, url) if url.starts_with("/api/source-file") => {
                 source_file_response(&report_path, url)
             }
+            (Method::Get, url) if url.starts_with("/api/agent-handoff-status") => {
+                agent_handoff_status_response(&report_path, url)
+            }
             (Method::Post, "/api/agent-handoff") => {
                 let mut body = String::new();
                 let _ = request.as_reader().read_to_string(&mut body);
@@ -220,6 +223,32 @@ fn source_file_response(
     json_response(serde_json::to_vec(&SourceFileContext { source, messages }).unwrap_or_default())
 }
 
+fn agent_handoff_status_response(
+    report_path: &Utf8PathBuf,
+    url: &str,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let Some(id) = query_param(url, "id") else {
+        return text_response(StatusCode(400), "missing handoff id".to_owned());
+    };
+    let Some(status_path) = agent_handoff_status_path(report_path, &id) else {
+        return text_response(StatusCode(400), "invalid handoff id".to_owned());
+    };
+    let status = match read_agent_status(&status_path) {
+        Ok(status) => status,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return text_response(StatusCode(404), "handoff status not found".to_owned());
+        }
+        Err(error) => {
+            return text_response(
+                StatusCode(500),
+                format!("failed to read handoff status: {error}"),
+            );
+        }
+    };
+
+    json_value_response(&enrich_agent_status(status))
+}
+
 fn agent_handoff_response(
     report_path: &Utf8PathBuf,
     body: &str,
@@ -260,15 +289,17 @@ fn agent_handoff_response(
         );
     }
 
-    let base_name = format!(
+    let handoff_id = format!(
         "{}-{}-{}",
         unix_timestamp(),
         request.agent.slug(),
         sanitize_file_component(&symbol.demangled)
     );
-    let context_path = handoff_dir.join(format!("{base_name}.context.json"));
-    let prompt_path = handoff_dir.join(format!("{base_name}.prompt.md"));
-    let script_path = handoff_dir.join(format!("{base_name}{}", shell_script_extension()));
+    let context_path = handoff_dir.join(format!("{handoff_id}.context.json"));
+    let prompt_path = handoff_dir.join(format!("{handoff_id}.prompt.md"));
+    let script_path = handoff_dir.join(format!("{handoff_id}{}", shell_script_extension()));
+    let status_path = handoff_dir.join(format!("{handoff_id}.status.json"));
+    let log_path = handoff_dir.join(format!("{handoff_id}.log"));
     let context = build_agent_handoff_context(report_path, &report, symbol, source, disassembly);
     let prompt = build_agent_prompt(request.agent, &context, &context_path);
 
@@ -293,13 +324,50 @@ fn agent_handoff_response(
             format!("failed to write agent prompt: {error}"),
         );
     }
-    if let Err(error) = write_agent_script(&script_path, request.agent, &prompt_path, &report) {
+    if let Err(error) = write_agent_script(AgentScriptConfig {
+        script_path: &script_path,
+        agent: request.agent,
+        handoff_id: &handoff_id,
+        prompt_path: &prompt_path,
+        context_path: &context_path,
+        status_path: &status_path,
+        log_path: &log_path,
+        report: &report,
+    }) {
         return text_response(
             StatusCode(500),
             format!("failed to write agent launch script: {error}"),
         );
     }
+    let running_status = AgentHandoffStatus::running(
+        &handoff_id,
+        request.agent,
+        &prompt_path,
+        &context_path,
+        &script_path,
+        &log_path,
+    );
+    if let Err(error) = write_agent_status(&status_path, &running_status) {
+        return text_response(
+            StatusCode(500),
+            format!("failed to write agent status: {error}"),
+        );
+    }
     if let Err(error) = launch_agent_shell(&script_path, request.agent) {
+        let failed_status = AgentHandoffStatus::failed(
+            &handoff_id,
+            request.agent,
+            None,
+            format!("failed to launch {}: {error}", request.agent.label()),
+            None,
+            AgentHandoffPaths {
+                prompt_path: &prompt_path,
+                context_path: &context_path,
+                script_path: &script_path,
+                log_path: &log_path,
+            },
+        );
+        let _ = write_agent_status(&status_path, &failed_status);
         return text_response(
             StatusCode(500),
             format!("failed to launch {}: {error}", request.agent.label()),
@@ -308,9 +376,12 @@ fn agent_handoff_response(
 
     json_value_response(&AgentHandoffResponse {
         agent: request.agent.label(),
+        handoff_id,
         prompt_path: prompt_path.to_string_lossy().to_string(),
         context_path: context_path.to_string_lossy().to_string(),
         script_path: script_path.to_string_lossy().to_string(),
+        status_path: status_path.to_string_lossy().to_string(),
+        log_path: log_path.to_string_lossy().to_string(),
         command: request
             .agent
             .command_preview(&agent_prompt_for_path(&prompt_path)),
@@ -350,6 +421,19 @@ fn windows_agent_prompt_command(agent: AgentKind) -> String {
         AgentKind::Opencode => "opencode run \"%STACKWISE_PROMPT%\"".to_owned(),
         _ => format!("{} -p \"%STACKWISE_PROMPT%\"", agent.program()),
     }
+}
+
+#[cfg(windows)]
+fn windows_agent_status_command(initial_state: AgentHandoffState) -> String {
+    let body = match initial_state {
+        AgentHandoffState::Running => {
+            "$payload = [ordered]@{ id = $env:STACKWISE_HANDOFF_ID; agent = $env:STACKWISE_AGENT; state = 'running'; exit_code = $null; message = ($env:STACKWISE_AGENT + ' is running. Prompt: ' + $env:STACKWISE_PROMPT_FILE); log_tail = $null; prompt_path = $env:STACKWISE_PROMPT_FILE; context_path = $env:STACKWISE_CONTEXT_FILE; script_path = $env:STACKWISE_SCRIPT_FILE; log_path = $env:STACKWISE_LOG_FILE; updated_at = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() }; $json = $payload | ConvertTo-Json -Compress; [System.IO.File]::WriteAllText($env:STACKWISE_STATUS_FILE, $json, (New-Object System.Text.UTF8Encoding $false))"
+        }
+        AgentHandoffState::Succeeded | AgentHandoffState::Failed => {
+            "$exitCode = [int]$env:STACKWISE_EXIT_CODE; $log = if (Test-Path -LiteralPath $env:STACKWISE_LOG_FILE) { [string](Get-Content -LiteralPath $env:STACKWISE_LOG_FILE -Raw) } else { '' }; $tail = if ($log.Length -gt 4000) { $log.Substring($log.Length - 4000) } else { [string]$log }; $state = if ($exitCode -eq 0) { 'succeeded' } else { 'failed' }; $message = if ($exitCode -eq 0) { $env:STACKWISE_AGENT + ' finished successfully.' } else { $env:STACKWISE_AGENT + ' exited with code ' + $exitCode + '. See the handoff log.' }; $payload = [ordered]@{ id = $env:STACKWISE_HANDOFF_ID; agent = $env:STACKWISE_AGENT; state = $state; exit_code = $exitCode; message = $message; log_tail = $tail; prompt_path = $env:STACKWISE_PROMPT_FILE; context_path = $env:STACKWISE_CONTEXT_FILE; script_path = $env:STACKWISE_SCRIPT_FILE; log_path = $env:STACKWISE_LOG_FILE; updated_at = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() }; $json = $payload | ConvertTo-Json -Compress; [System.IO.File]::WriteAllText($env:STACKWISE_STATUS_FILE, $json, (New-Object System.Text.UTF8Encoding $false))"
+        }
+    };
+    format!("powershell -NoProfile -ExecutionPolicy Bypass -Command \"{body}\"")
 }
 
 impl AgentKind {
@@ -663,12 +747,79 @@ fn format_optional_bytes(value: Option<u64>) -> String {
         .unwrap_or_else(|| "unknown".to_owned())
 }
 
+fn write_agent_status(path: &Path, status: &AgentHandoffStatus) -> anyhow::Result<()> {
+    fs::write(path, serde_json::to_vec_pretty(status)?)?;
+    Ok(())
+}
+
+fn read_agent_status(path: &Path) -> std::io::Result<AgentHandoffStatus> {
+    let data = fs::read(path)?;
+    serde_json::from_slice(&data)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+}
+
+fn enrich_agent_status(mut status: AgentHandoffStatus) -> AgentHandoffStatus {
+    if status.state == AgentHandoffState::Failed {
+        if let Some(message) = friendly_agent_failure_message(
+            status.agent_kind(),
+            status.log_tail.as_deref().unwrap_or_default(),
+            status.exit_code,
+        ) {
+            status.message = message;
+        }
+    }
+    status
+}
+
+fn friendly_agent_failure_message(
+    agent: Option<AgentKind>,
+    log: &str,
+    exit_code: Option<i32>,
+) -> Option<String> {
+    let normalized = log.to_lowercase();
+    if agent == Some(AgentKind::Claude)
+        && (normalized.contains("does not have access to claude")
+            || normalized.contains("please login again")
+            || normalized.contains("contact your administrator"))
+    {
+        return Some(
+            "Claude is unavailable for this account. Try Codex, Cursor, or OpenCode, or log into Claude with an organization that has access.".to_owned(),
+        );
+    }
+
+    if normalized.contains("not recognized as an internal or external command")
+        || normalized.contains("command not found")
+    {
+        let label = agent.map(AgentKind::label).unwrap_or("Agent");
+        return Some(format!(
+            "{label} is not installed or is not on PATH. The Stackwise prompt was still generated and can be reused manually."
+        ));
+    }
+
+    exit_code.map(|code| {
+        let label = agent.map(AgentKind::label).unwrap_or("Agent");
+        format!("{label} exited with code {code}. See the handoff log for details.")
+    })
+}
+
 fn agent_handoff_dir(report_path: &Utf8PathBuf) -> PathBuf {
     report_path
         .as_std_path()
         .parent()
         .map(|parent| parent.join("stackwise-agent-handoffs"))
         .unwrap_or_else(|| PathBuf::from("stackwise-agent-handoffs"))
+}
+
+fn agent_handoff_status_path(report_path: &Utf8PathBuf, id: &str) -> Option<PathBuf> {
+    is_safe_handoff_id(id).then(|| agent_handoff_dir(report_path).join(format!("{id}.status.json")))
+}
+
+fn is_safe_handoff_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 160
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
 }
 
 fn unix_timestamp() -> u64 {
@@ -714,12 +865,28 @@ fn shell_script_extension() -> &'static str {
     }
 }
 
-fn write_agent_script(
-    script_path: &Path,
+struct AgentScriptConfig<'a> {
+    script_path: &'a Path,
     agent: AgentKind,
-    prompt_path: &Path,
-    report: &StackwiseReport,
-) -> anyhow::Result<()> {
+    handoff_id: &'a str,
+    prompt_path: &'a Path,
+    context_path: &'a Path,
+    status_path: &'a Path,
+    log_path: &'a Path,
+    report: &'a StackwiseReport,
+}
+
+fn write_agent_script(config: AgentScriptConfig<'_>) -> anyhow::Result<()> {
+    let AgentScriptConfig {
+        script_path,
+        agent,
+        handoff_id,
+        prompt_path,
+        context_path,
+        status_path,
+        log_path,
+        report,
+    } = config;
     let prompt = agent_prompt_for_path(prompt_path);
     let cwd = report
         .build
@@ -731,21 +898,38 @@ fn write_agent_script(
 
     #[cfg(windows)]
     {
+        let running_status = windows_agent_status_command(AgentHandoffState::Running);
+        let final_status = windows_agent_status_command(AgentHandoffState::Failed);
         let script = format!(
-            "@echo off\r\ncd /d \"{}\"\r\nset \"STACKWISE_PROMPT={}\"\r\nset \"STACKWISE_PROMPT_FILE={}\"\r\necho Stackwise launching {} for stack optimization...\r\necho Prompt: \"%STACKWISE_PROMPT_FILE%\"\r\n{}\r\necho.\r\necho Agent exited with %ERRORLEVEL%.\r\n",
+            "@echo off\r\nsetlocal EnableExtensions\r\ncd /d \"{}\"\r\nset \"STACKWISE_HANDOFF_ID={}\"\r\nset \"STACKWISE_AGENT={}\"\r\nset \"STACKWISE_PROMPT={}\"\r\nset \"STACKWISE_PROMPT_FILE={}\"\r\nset \"STACKWISE_CONTEXT_FILE={}\"\r\nset \"STACKWISE_SCRIPT_FILE={}\"\r\nset \"STACKWISE_STATUS_FILE={}\"\r\nset \"STACKWISE_LOG_FILE={}\"\r\necho Stackwise launching {} for stack optimization...\r\necho Prompt: \"%STACKWISE_PROMPT_FILE%\"\r\n{}\r\ncall {} > \"%STACKWISE_LOG_FILE%\" 2>&1\r\nset \"STACKWISE_EXIT_CODE=%ERRORLEVEL%\"\r\ntype \"%STACKWISE_LOG_FILE%\"\r\n{}\r\nif not \"%STACKWISE_EXIT_CODE%\"==\"0\" (\r\n  if /I \"%STACKWISE_AGENT%\"==\"Claude\" (\r\n    findstr /I /C:\"does not have access to Claude\" /C:\"Please login again\" /C:\"contact your administrator\" \"%STACKWISE_LOG_FILE%\" >nul && echo Claude is unavailable for this account. Try Codex, Cursor, or OpenCode, or log into Claude with an organization that has access.\r\n  )\r\n)\r\necho.\r\necho Agent exited with %STACKWISE_EXIT_CODE%.\r\n",
             escape_batch_quoted(&cwd.to_string_lossy()),
+            escape_batch_env(handoff_id),
+            agent.label(),
             escape_batch_env(&prompt),
             escape_batch_env(&prompt_path.to_string_lossy()),
+            escape_batch_env(&context_path.to_string_lossy()),
+            escape_batch_env(&script_path.to_string_lossy()),
+            escape_batch_env(&status_path.to_string_lossy()),
+            escape_batch_env(&log_path.to_string_lossy()),
             agent.label(),
-            windows_agent_prompt_command(agent)
+            running_status,
+            windows_agent_prompt_command(agent),
+            final_status
         );
         fs::write(script_path, script)?;
     }
     #[cfg(not(windows))]
     {
         let script = format!(
-            "#!/usr/bin/env sh\ncd {}\nprintf '%s\\n' {}\n{}\n",
+            "#!/usr/bin/env sh\ncd {}\nSTACKWISE_HANDOFF_ID={}\nSTACKWISE_AGENT={}\nSTACKWISE_PROMPT_FILE={}\nSTACKWISE_CONTEXT_FILE={}\nSTACKWISE_SCRIPT_FILE={}\nSTACKWISE_STATUS_FILE={}\nSTACKWISE_LOG_FILE={}\nexport STACKWISE_HANDOFF_ID STACKWISE_AGENT STACKWISE_PROMPT_FILE STACKWISE_CONTEXT_FILE STACKWISE_SCRIPT_FILE STACKWISE_STATUS_FILE STACKWISE_LOG_FILE\nprintf '%s\\n' {}\nprintf '{{\"id\":\"%s\",\"agent\":\"%s\",\"state\":\"running\",\"exit_code\":null,\"message\":\"%s is running.\",\"log_tail\":null,\"prompt_path\":\"%s\",\"context_path\":\"%s\",\"script_path\":\"%s\",\"log_path\":\"%s\",\"updated_at\":0}}\\n' \"$STACKWISE_HANDOFF_ID\" \"$STACKWISE_AGENT\" \"$STACKWISE_AGENT\" \"$STACKWISE_PROMPT_FILE\" \"$STACKWISE_CONTEXT_FILE\" \"$STACKWISE_SCRIPT_FILE\" \"$STACKWISE_LOG_FILE\" > \"$STACKWISE_STATUS_FILE\"\n{} > \"$STACKWISE_LOG_FILE\" 2>&1\nSTACKWISE_EXIT_CODE=$?\ncat \"$STACKWISE_LOG_FILE\"\nif [ \"$STACKWISE_EXIT_CODE\" -eq 0 ]; then STACKWISE_STATE=succeeded; STACKWISE_MESSAGE=\"$STACKWISE_AGENT finished successfully.\"; else STACKWISE_STATE=failed; STACKWISE_MESSAGE=\"$STACKWISE_AGENT exited with code $STACKWISE_EXIT_CODE. See the handoff log.\"; fi\nSTACKWISE_LOG_TAIL=$(tail -c 4000 \"$STACKWISE_LOG_FILE\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g')\nprintf '{{\"id\":\"%s\",\"agent\":\"%s\",\"state\":\"%s\",\"exit_code\":%s,\"message\":\"%s\",\"log_tail\":\"%s\",\"prompt_path\":\"%s\",\"context_path\":\"%s\",\"script_path\":\"%s\",\"log_path\":\"%s\",\"updated_at\":0}}\\n' \"$STACKWISE_HANDOFF_ID\" \"$STACKWISE_AGENT\" \"$STACKWISE_STATE\" \"$STACKWISE_EXIT_CODE\" \"$STACKWISE_MESSAGE\" \"$STACKWISE_LOG_TAIL\" \"$STACKWISE_PROMPT_FILE\" \"$STACKWISE_CONTEXT_FILE\" \"$STACKWISE_SCRIPT_FILE\" \"$STACKWISE_LOG_FILE\" > \"$STACKWISE_STATUS_FILE\"\nprintf '\\nAgent exited with %s.\\n' \"$STACKWISE_EXIT_CODE\"\n",
             shell_quote(&cwd.to_string_lossy()),
+            shell_quote(handoff_id),
+            shell_quote(agent.label()),
+            shell_quote(&prompt_path.to_string_lossy()),
+            shell_quote(&context_path.to_string_lossy()),
+            shell_quote(&script_path.to_string_lossy()),
+            shell_quote(&status_path.to_string_lossy()),
+            shell_quote(&log_path.to_string_lossy()),
             shell_quote(&format!(
                 "Stackwise launching {} for stack optimization...",
                 agent.label()
@@ -1172,7 +1356,7 @@ struct AgentHandoffRequest {
     symbol_id: u32,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum AgentKind {
     Claude,
@@ -1213,11 +1397,106 @@ impl AgentKind {
 #[derive(Debug, Serialize)]
 struct AgentHandoffResponse {
     agent: &'static str,
+    handoff_id: String,
     prompt_path: String,
     context_path: String,
     script_path: String,
+    status_path: String,
+    log_path: String,
     command: String,
     message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AgentHandoffStatus {
+    id: String,
+    agent: String,
+    state: AgentHandoffState,
+    exit_code: Option<i32>,
+    message: String,
+    log_tail: Option<String>,
+    prompt_path: String,
+    context_path: String,
+    script_path: String,
+    log_path: String,
+    updated_at: u64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum AgentHandoffState {
+    Running,
+    Succeeded,
+    Failed,
+}
+
+struct AgentHandoffPaths<'a> {
+    prompt_path: &'a Path,
+    context_path: &'a Path,
+    script_path: &'a Path,
+    log_path: &'a Path,
+}
+
+impl AgentHandoffStatus {
+    fn running(
+        id: &str,
+        agent: AgentKind,
+        prompt_path: &Path,
+        context_path: &Path,
+        script_path: &Path,
+        log_path: &Path,
+    ) -> Self {
+        Self {
+            id: id.to_owned(),
+            agent: agent.label().to_owned(),
+            state: AgentHandoffState::Running,
+            exit_code: None,
+            message: format!(
+                "{} is running. Prompt: {}",
+                agent.label(),
+                prompt_path.display()
+            ),
+            log_tail: None,
+            prompt_path: prompt_path.to_string_lossy().to_string(),
+            context_path: context_path.to_string_lossy().to_string(),
+            script_path: script_path.to_string_lossy().to_string(),
+            log_path: log_path.to_string_lossy().to_string(),
+            updated_at: unix_timestamp(),
+        }
+    }
+
+    fn failed(
+        id: &str,
+        agent: AgentKind,
+        exit_code: Option<i32>,
+        message: String,
+        log_tail: Option<String>,
+        paths: AgentHandoffPaths<'_>,
+    ) -> Self {
+        Self {
+            id: id.to_owned(),
+            agent: agent.label().to_owned(),
+            state: AgentHandoffState::Failed,
+            exit_code,
+            message,
+            log_tail,
+            prompt_path: paths.prompt_path.to_string_lossy().to_string(),
+            context_path: paths.context_path.to_string_lossy().to_string(),
+            script_path: paths.script_path.to_string_lossy().to_string(),
+            log_path: paths.log_path.to_string_lossy().to_string(),
+            updated_at: unix_timestamp(),
+        }
+    }
+
+    fn agent_kind(&self) -> Option<AgentKind> {
+        match self.agent.as_str() {
+            "Claude" => Some(AgentKind::Claude),
+            "Codex" => Some(AgentKind::Codex),
+            "Cursor" => Some(AgentKind::Cursor),
+            "OpenCode" => Some(AgentKind::Opencode),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -1293,12 +1572,21 @@ mod tests {
     #[cfg(windows)]
     use super::windows_agent_shell_args;
     use super::{
+        agent_handoff_status_path, enrich_agent_status, friendly_agent_failure_message,
         resolve_rust_std_source_path_with_roots, rust_library_relative_path,
-        sanitize_file_component, ui_asset_path, AgentHandoffRequest,
+        sanitize_file_component, ui_asset_path, write_agent_script, AgentHandoffPaths,
+        AgentHandoffRequest, AgentHandoffState, AgentHandoffStatus, AgentKind, AgentScriptConfig,
     };
     use std::fs;
     use std::path::PathBuf;
+    #[cfg(windows)]
+    use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use stackwise_core::{
+        ArtifactInfo, BuildInfo, Confidence, ExactMode, GeneratorInfo, ObjectFormat,
+        StackwiseReport, Summary,
+    };
 
     #[test]
     fn detects_mixed_separator_rustc_library_paths() {
@@ -1384,6 +1672,147 @@ mod tests {
         assert_eq!(request.symbol_id, 7);
     }
 
+    #[test]
+    fn classifies_claude_org_access_failures() {
+        let message = friendly_agent_failure_message(
+            Some(AgentKind::Claude),
+            "Your organization does not have access to Claude. Please login again or contact your administrator.",
+            Some(1),
+        )
+        .expect("Claude access failure should be classified");
+
+        assert!(message.contains("Claude is unavailable"));
+        assert!(message.contains("Codex"));
+        assert!(message.contains("OpenCode"));
+    }
+
+    #[test]
+    fn enriches_failed_agent_status_from_log_tail() {
+        let prompt_path = PathBuf::from("prompt.md");
+        let context_path = PathBuf::from("context.json");
+        let script_path = PathBuf::from("launch.cmd");
+        let log_path = PathBuf::from("launch.log");
+        let status = AgentHandoffStatus::failed(
+            "123-claude-demo",
+            AgentKind::Claude,
+            Some(1),
+            "Claude exited with code 1.".to_owned(),
+            Some("Your organization does not have access to Claude.".to_owned()),
+            AgentHandoffPaths {
+                prompt_path: &prompt_path,
+                context_path: &context_path,
+                script_path: &script_path,
+                log_path: &log_path,
+            },
+        );
+
+        let status = enrich_agent_status(status);
+
+        assert_eq!(status.state, AgentHandoffState::Failed);
+        assert!(status.message.contains("Claude is unavailable"));
+    }
+
+    #[test]
+    fn validates_handoff_status_paths() {
+        let report_path = camino::Utf8PathBuf::from("target/report.json");
+
+        assert!(agent_handoff_status_path(&report_path, "123-claude-symbol").is_some());
+        assert!(agent_handoff_status_path(&report_path, "../secret").is_none());
+        assert!(agent_handoff_status_path(&report_path, "").is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_agent_script_writes_status_and_log_paths() {
+        let root = unique_temp_dir();
+        let script_path = root.join("launch.cmd");
+        let prompt_path = root.join("brief.prompt.md");
+        let context_path = root.join("brief.context.json");
+        let status_path = root.join("brief.status.json");
+        let log_path = root.join("brief.log");
+
+        fs::create_dir_all(&root).expect("temp root is created");
+        let report = minimal_report(root.to_string_lossy().as_ref());
+        write_agent_script(AgentScriptConfig {
+            script_path: &script_path,
+            agent: AgentKind::Claude,
+            handoff_id: "123-claude-demo",
+            prompt_path: &prompt_path,
+            context_path: &context_path,
+            status_path: &status_path,
+            log_path: &log_path,
+            report: &report,
+        })
+        .expect("script should be written");
+
+        let script = fs::read_to_string(&script_path).expect("script is readable");
+        assert!(script.contains("STACKWISE_STATUS_FILE"));
+        assert!(script.contains("STACKWISE_LOG_FILE"));
+        assert!(script.contains("powershell -NoProfile"));
+        assert!(script.contains("does not have access to Claude"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_agent_script_records_nonzero_exit_status() {
+        let root = unique_temp_dir();
+        let bin = root.join("bin");
+        let script_path = root.join("launch.cmd");
+        let prompt_path = root.join("brief.prompt.md");
+        let context_path = root.join("brief.context.json");
+        let status_path = root.join("brief.status.json");
+        let log_path = root.join("brief.log");
+
+        fs::create_dir_all(&bin).expect("test bin is created");
+        fs::write(
+            bin.join("cursor-agent.cmd"),
+            "@echo fake cursor failure\r\n@exit /b 7\r\n",
+        )
+        .expect("fake agent is written");
+        fs::write(&prompt_path, "optimize this").expect("prompt is written");
+
+        let report = minimal_report(root.to_string_lossy().as_ref());
+        write_agent_script(AgentScriptConfig {
+            script_path: &script_path,
+            agent: AgentKind::Cursor,
+            handoff_id: "123-cursor-demo",
+            prompt_path: &prompt_path,
+            context_path: &context_path,
+            status_path: &status_path,
+            log_path: &log_path,
+            report: &report,
+        })
+        .expect("script should be written");
+
+        let path = format!(
+            "{};{}",
+            bin.to_string_lossy(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let output = Command::new("cmd")
+            .arg("/C")
+            .arg(&script_path)
+            .env("PATH", path)
+            .output()
+            .expect("handoff script should run");
+
+        assert!(output.status.success());
+        let status: AgentHandoffStatus =
+            serde_json::from_slice(&fs::read(&status_path).expect("status should be written"))
+                .expect("status should be valid JSON");
+        assert_eq!(status.state, AgentHandoffState::Failed);
+        assert_eq!(status.exit_code, Some(7));
+        assert!(status
+            .log_tail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("fake cursor failure"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[cfg(windows)]
     #[test]
     fn windows_agent_shell_args_use_empty_start_title() {
@@ -1404,5 +1833,46 @@ mod tests {
             .expect("system clock is after unix epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("stackwise-rust-src-test-{nanos}"))
+    }
+
+    fn minimal_report(workspace_root: &str) -> StackwiseReport {
+        StackwiseReport {
+            schema_version: "0.1.0".to_owned(),
+            generator: GeneratorInfo {
+                name: "stackwise".to_owned(),
+                version: "0.1.0".to_owned(),
+            },
+            artifact: ArtifactInfo {
+                path: "demo.exe".to_owned(),
+                file_name: "demo.exe".to_owned(),
+                format: ObjectFormat::PeCoff,
+                architecture: "x86_64".to_owned(),
+                pointer_width: Some(64),
+                size_bytes: 1,
+            },
+            build: Some(BuildInfo {
+                workspace_root: Some(workspace_root.to_owned()),
+                package: Some("demo".to_owned()),
+                profile: Some("release".to_owned()),
+                target: None,
+                features: Vec::new(),
+                exact_mode: ExactMode::Auto,
+            }),
+            summary: Summary {
+                symbol_count: 0,
+                edge_count: 0,
+                known_frame_count: 0,
+                unknown_frame_count: 0,
+                recursive_symbol_count: 0,
+                indirect_edge_count: 0,
+                max_own_frame: None,
+                max_worst_path: None,
+                confidence: Confidence::Unknown,
+            },
+            symbols: Vec::new(),
+            edges: Vec::new(),
+            groups: Vec::new(),
+            diagnostics: Vec::new(),
+        }
     }
 }

@@ -33,6 +33,14 @@ import {
   type GraphNode,
 } from "./callGraph";
 import {
+  agentLaunchErrorMessage,
+  agentStatusDisplayMessage,
+  isAgentUnavailableStatus,
+  type AgentHandoffResponse,
+  type AgentHandoffStatus,
+  type AgentId,
+} from "./agentStatus";
+import {
   type EdgeKind,
   filterSymbols,
   formatBytes,
@@ -55,7 +63,6 @@ import { buildTreemap, type TreemapRect } from "./treemap";
 type GraphLayout = "TB" | "LR" | "RL" | "BT";
 type GraphNavigationMode = "default" | "focus" | "callers";
 type ThemeMode = "light" | "dark";
-type AgentId = "claude" | "codex" | "cursor" | "opencode";
 type AgentIcon = {
   path: string;
   viewBox: string;
@@ -830,23 +837,15 @@ function Details({ symbol }: { symbol: SymbolReport | null }) {
   );
 }
 
-type AgentHandoffResponse = {
-  agent: string;
-  prompt_path: string;
-  context_path: string;
-  script_path: string;
-  command: string;
-  message: string;
-};
-
 function AgentActions({ symbol }: { symbol: SymbolReport }) {
   const [busyAgent, setBusyAgent] = useState<AgentId | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [unavailableAgents, setUnavailableAgents] = useState<Set<AgentId>>(() => new Set());
 
   const launchAgent = async (agent: AgentId) => {
     setBusyAgent(agent);
-    setStatus(null);
+    setStatus(`Launching ${agentLabel(agent)}...`);
     setError(null);
     try {
       const response = await fetch("/api/agent-handoff", {
@@ -865,7 +864,23 @@ function AgentActions({ symbol }: { symbol: SymbolReport }) {
         throw new Error(payload?.message ?? (text || `HTTP ${response.status}`));
       }
       const promptPath = payload?.prompt_path ? ` Prompt: ${payload.prompt_path}` : "";
-      setStatus(`${payload?.message ?? `Started ${agent}.`}${promptPath}`);
+      setStatus(`${payload?.message ?? `Started ${agentLabel(agent)}.`}${promptPath}`);
+      if (payload?.handoff_id) {
+        const launchStatus = await pollAgentStatus(payload.handoff_id);
+        if (launchStatus?.state === "failed") {
+          if (isAgentUnavailableStatus(agent, launchStatus)) {
+            setUnavailableAgents((current) => new Set(current).add(agent));
+          }
+          setStatus(null);
+          setError(agentStatusDisplayMessage(launchStatus));
+        } else if (launchStatus?.state === "succeeded") {
+          setStatus(agentStatusDisplayMessage(launchStatus));
+        } else {
+          setStatus(
+            `${payload.agent} is still running. Prompt: ${payload.prompt_path}. Log: ${payload.log_path}`,
+          );
+        }
+      }
     } catch (cause) {
       setError(agentLaunchErrorMessage(cause));
     } finally {
@@ -880,19 +895,26 @@ function AgentActions({ symbol }: { symbol: SymbolReport }) {
         {busyAgent ? <em>Launching...</em> : null}
       </div>
       <div className="agentButtons">
-        {agentTargets.map((agent) => (
-          <button
-            className={`agentButton ${agent.id}`}
-            disabled={busyAgent !== null}
-            key={agent.id}
-            type="button"
-            aria-label={`Send symbol to ${agent.label}`}
-            title={`Send ${symbol.demangled} to ${agent.label} with Stackwise context`}
-            onClick={() => launchAgent(agent.id)}
-          >
-            <AgentLogo agent={agent} />
-          </button>
-        ))}
+        {agentTargets.map((agent) => {
+          const unavailable = unavailableAgents.has(agent.id);
+          return (
+            <button
+              className={`agentButton ${agent.id}${unavailable ? " unavailable" : ""}`}
+              disabled={busyAgent !== null || unavailable}
+              key={agent.id}
+              type="button"
+              aria-label={`Send symbol to ${agent.label}`}
+              title={
+                unavailable
+                  ? `${agent.label} is unavailable in this page session. Try another agent or reload after fixing access.`
+                  : `Send ${symbol.demangled} to ${agent.label} with Stackwise context`
+              }
+              onClick={() => launchAgent(agent.id)}
+            >
+              <AgentLogo agent={agent} />
+            </button>
+          );
+        })}
       </div>
       {status ? <p className="agentStatus success" title={status}>{status}</p> : null}
       {error ? <p className="agentStatus error">{error}</p> : null}
@@ -900,12 +922,27 @@ function AgentActions({ symbol }: { symbol: SymbolReport }) {
   );
 }
 
-function agentLaunchErrorMessage(cause: unknown): string {
-  const message = cause instanceof Error ? cause.message : String(cause);
-  if (/failed to fetch|load failed|networkerror/i.test(message)) {
-    return "Stackwise server is not reachable. Reopen the report with `stackwise open <report.json> --serve` and use that live localhost URL.";
+async function pollAgentStatus(handoffId: string): Promise<AgentHandoffStatus | null> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await delay(attempt === 0 ? 500 : 750);
+    const response = await fetch(`/api/agent-handoff-status?id=${encodeURIComponent(handoffId)}`);
+    if (response.status === 404) continue;
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `HTTP ${response.status}`);
+    }
+    const status = (await response.json()) as AgentHandoffStatus;
+    if (status.state !== "running") return status;
   }
-  return message;
+  return null;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function agentLabel(agent: AgentId): string {
+  return agentTargets.find((target) => target.id === agent)?.label ?? agent;
 }
 
 function AgentLogo({ agent }: { agent: (typeof agentTargets)[number] }) {

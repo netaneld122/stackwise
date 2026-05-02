@@ -904,6 +904,10 @@ dd {
   background: var(--accent-soft);
 }
 
+.agentButton.unavailable {
+  opacity: 0.42;
+}
+
 .agentLogo {
   display: block;
   width: 18px;
@@ -934,12 +938,13 @@ dd {
 }
 
 .agentStatus {
-  overflow: hidden;
+  overflow: auto;
+  max-height: 132px;
   border-radius: 8px;
   padding: 7px 8px;
   font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
+  white-space: pre-wrap;
 }
 
 .agentStatus.success {
