@@ -35,6 +35,7 @@ import {
   Pin,
   Redo2,
   RotateCcw,
+  Route,
   Search,
   Sun,
   Undo2,
@@ -269,9 +270,9 @@ function ReportView({ report }: { report: StackwiseReport }) {
   const setCallerDepth = (callerDepth: number) => commitGraphNavigation((current) => ({ ...current, callerDepth }));
   const setCalleeDepth = (calleeDepth: number) => commitGraphNavigation((current) => ({ ...current, calleeDepth }));
   const setGraphLayout = (layout: GraphLayout) => commitGraphNavigation((current) => ({ ...current, layout }));
-  const toggleWorstBranchHighlight = (symbolId: number) => commitGraphNavigation((current) => ({
+  const showWorstBranchHighlight = (symbolId: number) => commitGraphNavigation((current) => ({
     ...current,
-    highlightBranchRootId: current.highlightBranchRootId === symbolId ? null : symbolId,
+    highlightBranchRootId: symbolId,
   }));
   const undoGraphNavigation = () => setGraphHistory(undoGraphHistory);
   const redoGraphNavigation = () => setGraphHistory(redoGraphHistory);
@@ -428,7 +429,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
               highlightedWorstBranchRootId={graphState.highlightBranchRootId}
               onPivotSymbol={pivotToSymbol}
               onShowCallers={showCallersForSymbol}
-              onToggleWorstBranch={toggleWorstBranchHighlight}
+              onShowWorstBranch={showWorstBranchHighlight}
             />
           )}
         </div>
@@ -1095,11 +1096,11 @@ function AgentActions({ symbol }: { symbol: SymbolReport }) {
   const copyPromptPath = async () => {
     if (!brief) return;
     try {
-      await navigator.clipboard.writeText(brief.prompt_path);
+      await copyTextToClipboard(brief.prompt_path);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(`Copy failed: ${cause instanceof Error ? cause.message : String(cause)}`);
     }
   };
 
@@ -1121,7 +1122,7 @@ function AgentActions({ symbol }: { symbol: SymbolReport }) {
       ) : (
         <>
           <div className="briefPathRow">
-            <code title={brief.prompt_path}>{brief.prompt_path}</code>
+            <code title={brief.prompt_path}>{compactPathTail(brief.prompt_path)}</code>
             <button
               type="button"
               className="copyBriefButton"
@@ -1152,6 +1153,37 @@ function AgentActions({ symbol }: { symbol: SymbolReport }) {
       {error ? <p className="agentStatus error">{error}</p> : null}
     </div>
   );
+}
+
+async function copyTextToClipboard(text: string): Promise<void> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+  } catch {
+    // Fall through to the textarea fallback for browsers that expose clipboard
+    // but reject it due to focus, permission, or embedded-webview policy.
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+  if (!copied) throw new Error("clipboard API unavailable");
+}
+
+function compactPathTail(path: string, maxLength = 74): string {
+  if (path.length <= maxLength) return path;
+  return `...${path.slice(-(maxLength - 3))}`;
 }
 
 async function pollAgentStatus(
@@ -1716,13 +1748,12 @@ type FlowData = {
   selected: boolean;
   dimmed: boolean;
   branchHighlighted: boolean;
-  onToggleWorstBranch: (symbolId: number) => void;
 };
 type StackwiseFlowNode = FlowNode<FlowData, "stackwise">;
 
 const nodeTypes = { stackwise: StackwiseGraphNode };
 const GRAPH_CONTEXT_MENU_WIDTH = 190;
-const GRAPH_CONTEXT_MENU_HEIGHT = 92;
+const GRAPH_CONTEXT_MENU_HEIGHT = 132;
 const GRAPH_CONTEXT_MENU_GAP = 8;
 
 function CallGraphView({
@@ -1737,7 +1768,7 @@ function CallGraphView({
   highlightedWorstBranchRootId,
   onPivotSymbol,
   onShowCallers,
-  onToggleWorstBranch,
+  onShowWorstBranch,
 }: {
   report: StackwiseReport;
   symbols: SymbolReport[];
@@ -1750,7 +1781,7 @@ function CallGraphView({
   highlightedWorstBranchRootId: number | null;
   onPivotSymbol: (symbolId: number) => void;
   onShowCallers: (symbolId: number) => void;
-  onToggleWorstBranch: (symbolId: number) => void;
+  onShowWorstBranch: (symbolId: number) => void;
 }) {
   const { setSelectedId } = useStackwiseStore();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; symbol: SymbolReport } | null>(null);
@@ -1766,8 +1797,8 @@ function CallGraphView({
     [calleeDepth, callerDepth, edgeKinds, report, rootId, symbols],
   );
   const { nodes, edges } = useMemo(
-    () => layoutFlowGraph(focused.nodes, focused.edges, report, selectedId, layout, highlightedWorstBranchRootId, onToggleWorstBranch),
-    [focused, highlightedWorstBranchRootId, layout, onToggleWorstBranch, report, selectedId],
+    () => layoutFlowGraph(focused.nodes, focused.edges, report, selectedId, layout, highlightedWorstBranchRootId),
+    [focused, highlightedWorstBranchRootId, layout, report, selectedId],
   );
   const fitKey = useMemo(
     () => `${focused.rootId}:${layout}:${callerDepth}:${calleeDepth}:${[...edgeKinds].sort().join(",")}:${symbols.length}`,
@@ -1882,7 +1913,17 @@ function CallGraphView({
                   setContextMenu(null);
                 }}
               >
-                <RotateCcw size={14} /> Focus here
+                <RotateCcw size={14} /> Set as root
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onShowWorstBranch(contextMenu.symbol.id);
+                  setContextMenu(null);
+                }}
+              >
+                <Route size={14} /> Show worst path
               </button>
               <button
                 type="button"
@@ -1932,17 +1973,7 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
       <div className="nodeMetrics">
         <span><b>Own</b>{formatBytes(symbol.own_frame.bytes)}</span>
         <span><b>Cumulative</b>{formatBytes(node.cumulativeStackBytes)}</span>
-        <button
-          className="nodeMetricButton"
-          type="button"
-          title="Highlight this node's worst visible stack branch"
-          onClick={(event) => {
-            event.stopPropagation();
-            data.onToggleWorstBranch(symbol.id);
-          }}
-        >
-          <b>Worst branch</b>{formatBytes(node.visibleWorstStackBytes)}
-        </button>
+        <span><b>Worst branch</b>{formatBytes(node.visibleWorstStackBytes)}</span>
       </div>
     </div>
   );
@@ -1955,7 +1986,6 @@ function layoutFlowGraph(
   selectedId: number | null,
   layout: GraphLayout,
   highlightedWorstBranchRootId: number | null,
-  onToggleWorstBranch: (symbolId: number) => void,
 ): { nodes: StackwiseFlowNode[]; edges: FlowEdge[] } {
   const graph = new dagre.graphlib.Graph();
   graph.setDefaultEdgeLabel(() => ({}));
@@ -2005,7 +2035,6 @@ function layoutFlowGraph(
         selected: symbol?.id === selectedId,
         dimmed: highlightedBranchSet != null && (symbol == null || !highlightedBranchSet.has(symbol.id)),
         branchHighlighted: symbol != null && highlightedWorstBranchRootId === symbol.id,
-        onToggleWorstBranch,
       },
       selected: symbol?.id === selectedId,
       draggable: false,

@@ -1403,29 +1403,12 @@ dd {
   margin-top: 11px;
 }
 
-.nodeMetrics span,
-.nodeMetricButton {
+.nodeMetrics span {
   display: grid;
   min-width: 0;
   gap: 2px;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-}
-
-.nodeMetricButton {
-  height: auto;
-  border: 0;
-  border-radius: 6px;
-  padding: 0;
-  background: transparent;
-  color: var(--heading);
-  text-align: left;
-}
-
-.nodeMetricButton:hover,
-.nodeMetricButton:focus-visible {
-  color: var(--accent);
-  text-decoration: underline;
 }
 
 .nodeMetrics b {
