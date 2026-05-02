@@ -6,3 +6,8 @@
 /ui/stackwise-ui/playwright-report/
 /ui/stackwise-ui/tsconfig.tsbuildinfo
 *.stackwise.tmp
+/.codex/
+/.stackwise-local/
+/*[Pp]rompt*.md
+/tasks/
+/skills/
