@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use camino::Utf8PathBuf;
@@ -197,6 +197,8 @@ fn symbol_context_response(
             }
             None => messages.push("No source location was available for this symbol.".to_owned()),
         }
+    } else if let Some(message) = stale_source_message(symbol, &report, report_path) {
+        messages.push(message);
     }
     if disassembly.is_none() {
         messages.push("Disassembly was unavailable for this symbol or architecture.".to_owned());
@@ -236,6 +238,8 @@ fn source_file_response(
     let mut messages = Vec::new();
     if source.is_none() {
         messages.push("Full source file was unavailable for this symbol.".to_owned());
+    } else if let Some(message) = stale_source_message(symbol, &report, report_path) {
+        messages.push(message);
     }
 
     json_response(serde_json::to_vec(&SourceFileContext { source, messages }).unwrap_or_default())
@@ -1436,6 +1440,38 @@ fn source_snippet(symbol: &SymbolReport, report: &StackwiseReport) -> Option<Sou
 
 fn source_file(symbol: &SymbolReport, report: &StackwiseReport) -> Option<SourceSnippet> {
     source_view(symbol, report, SourceViewMode::FullFile)
+}
+
+fn stale_source_message(
+    symbol: &SymbolReport,
+    report: &StackwiseReport,
+    report_path: &Utf8PathBuf,
+) -> Option<String> {
+    let location = symbol.source_location.as_ref()?;
+    let source_path = resolve_source_path(location, report)?;
+    let source_modified = fs::metadata(&source_path).ok()?.modified().ok()?;
+    let report_modified = fs::metadata(report_path.as_std_path())
+        .ok()?
+        .modified()
+        .ok()?;
+    let artifact_modified = fs::metadata(&report.artifact.path)
+        .ok()
+        .and_then(|metadata| metadata.modified().ok());
+    let timestamp_slop = Duration::from_secs(2);
+    let source_newer_than_report = source_modified > report_modified + timestamp_slop;
+    let artifact_newer_than_report = artifact_modified
+        .map(|modified| modified > report_modified + timestamp_slop)
+        .unwrap_or(false);
+    let source_newer_than_artifact = artifact_modified
+        .map(|modified| source_modified > modified + timestamp_slop)
+        .unwrap_or(false);
+    if !source_newer_than_report && !artifact_newer_than_report && !source_newer_than_artifact {
+        return None;
+    }
+    Some(
+        "The source file, artifact, or report timestamp changed after this analysis was generated, so recorded debug line numbers may be stale. Rebuild and rerun Stackwise to refresh source navigation."
+            .to_owned(),
+    )
 }
 
 fn source_view(
