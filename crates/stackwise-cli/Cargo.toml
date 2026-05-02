@@ -1,10 +1,20 @@
 [package]
 name = "stackwise"
 version = "0.1.0"
+description = "Drop-in Rust stack usage analysis with JSON reports and an interactive local UI"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+readme = "README.md"
+documentation = "https://docs.rs/stackwise"
+categories = [
+    "command-line-utilities",
+    "development-tools::cargo-plugins",
+    "development-tools::debugging",
+    "visualization",
+]
+keywords = ["stack", "rust", "analysis", "cli", "callgraph"]
 
 [dependencies]
 anyhow.workspace = true
@@ -18,7 +28,7 @@ open.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-stackwise-core = { path = "../stackwise-core" }
+stackwise-core = { version = "0.1.0", path = "../stackwise-core" }
 tiny_http.workspace = true
 toml.workspace = true
 

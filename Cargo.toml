@@ -12,7 +12,7 @@ resolver = "2"
 [workspace.package]
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/nati/stackwise"
+repository = "https://github.com/netaneld122/stackwise"
 rust-version = "1.85"
 
 [workspace.dependencies]

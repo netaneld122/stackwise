@@ -1,10 +1,15 @@
 [package]
 name = "stackwise-core"
 version = "0.1.0"
+description = "Artifact-first Rust stack analysis engine used by Stackwise"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+readme = "README.md"
+documentation = "https://docs.rs/stackwise-core"
+categories = ["development-tools::debugging"]
+keywords = ["stack", "rust", "analysis", "binary", "unwind"]
 
 [dependencies]
 camino.workspace = true

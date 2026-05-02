@@ -9,3 +9,6 @@
 - Validate CLI JSON before UI polish.
 - Verify UI changes with screenshots when changing README-visible behavior.
 - When work reaches a good completed state and verification passes, commit it.
+- Before large or risky changes, check `git status` and prefer starting from a clean baseline.
+- For large changes, commit each verified milestone with a focused message.
+- Never publish to crates.io from this environment; `cargo publish --dry-run` is allowed.

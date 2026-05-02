@@ -30,6 +30,10 @@ fn cargo_subcommand_analyzes_fixture_project() {
         .unwrap()
         .to_path_buf();
     let fixture = workspace_root.join("fixtures").join("simple-std");
+    if !fixture.join("Cargo.toml").exists() {
+        eprintln!("skipping fixture smoke test because fixtures are not packaged");
+        return;
+    }
     let temp = tempfile::tempdir().unwrap();
     let report_path = Utf8PathBuf::from_path_buf(temp.path().join("simple-std.json")).unwrap();
 
