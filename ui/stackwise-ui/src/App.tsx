@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -23,7 +24,7 @@ import {
   type Node as FlowNode,
   type NodeProps,
 } from "@xyflow/react";
-import { GitBranch, Grid2X2, Pin, Redo2, RotateCcw, Search, Undo2 } from "lucide-react";
+import { GitBranch, Grid2X2, Moon, Pin, Redo2, RotateCcw, Search, Sun, Undo2 } from "lucide-react";
 import {
   buildFocusedCallGraph,
   chooseDefaultRoot,
@@ -52,6 +53,7 @@ import { buildTreemap, type TreemapRect } from "./treemap";
 
 type GraphLayout = "TB" | "LR" | "RL" | "BT";
 type GraphNavigationMode = "default" | "focus" | "callers";
+type ThemeMode = "light" | "dark";
 type GraphNavigationState = {
   rootId: number | null;
   callerDepth: number;
@@ -502,6 +504,9 @@ function Shell({
   status: string;
 }) {
   const [paneSizes, setPaneSizes] = useState({ left: 320, right: 520 });
+  const [theme, toggleTheme] = useThemePreference();
+  const ThemeIcon = theme === "dark" ? Sun : Moon;
+  const themeLabel = theme === "dark" ? "Switch to light theme" : "Switch to dark theme";
   const appStyle = {
     "--left-width": `${paneSizes.left}px`,
     "--right-width": `${paneSizes.right}px`,
@@ -533,13 +538,17 @@ function Shell({
   };
 
   return (
-    <div className="app" style={appStyle}>
+    <div className="app" data-theme={theme} style={appStyle}>
       <header>
         <div className="brand">
           <LogoMark />
           <h1>Stackwise</h1>
         </div>
         {toolbar}
+        <button className="themeToggle" type="button" aria-label={themeLabel} title={themeLabel} onClick={toggleTheme}>
+          <ThemeIcon size={15} />
+          <span>{theme === "dark" ? "Dark" : "Light"}</span>
+        </button>
       </header>
       <aside>{left}</aside>
       <div
@@ -559,6 +568,32 @@ function Shell({
       <footer>{status}</footer>
     </div>
   );
+}
+
+function useThemePreference(): [ThemeMode, () => void] {
+  const [theme, setTheme] = useState<ThemeMode>(readInitialTheme);
+
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    try {
+      window.localStorage.setItem("stackwise.theme", theme);
+    } catch {
+      // Persistence is a convenience; the UI still works when storage is blocked.
+    }
+  }, [theme]);
+
+  return [theme, () => setTheme((current) => (current === "dark" ? "light" : "dark"))];
+}
+
+function readInitialTheme(): ThemeMode {
+  try {
+    const stored = window.localStorage.getItem("stackwise.theme");
+    if (stored === "light" || stored === "dark") return stored;
+  } catch {
+    // Ignore storage failures and fall back to the system preference.
+  }
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 function LogoMark() {
@@ -1392,20 +1427,20 @@ function CallGraphView({
           });
         }}
       >
-        <Background color="#dce5ee" gap={22} />
+        <Background color="var(--graph-grid)" gap={22} />
         <FlowControls showInteractive={false} />
         {nodes.length > 8 ? (
           <MiniMap<StackwiseFlowNode>
             ariaLabel="Call graph minimap"
             className="callGraphMiniMap"
             nodeColor={(node) => node.data.color}
-            nodeStrokeColor={(node) => (node.data.selected ? "#111827" : "rgba(100, 116, 139, 0.46)")}
+            nodeStrokeColor={(node) => (node.data.selected ? "var(--selected-outline)" : "var(--minimap-node-stroke)")}
             nodeClassName={(node) => `miniNode ${node.data.graphNode.relation}`}
             nodeBorderRadius={7}
             nodeStrokeWidth={2}
-            bgColor="rgba(255, 255, 255, 0.94)"
-            maskColor="rgba(15, 23, 42, 0.12)"
-            maskStrokeColor="#0f766e"
+            bgColor="var(--minimap-bg)"
+            maskColor="var(--minimap-mask)"
+            maskStrokeColor="var(--accent)"
             maskStrokeWidth={2}
             offsetScale={18}
             pannable

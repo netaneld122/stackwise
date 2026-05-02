@@ -1,6 +1,11 @@
 import { test, expect } from "@playwright/test";
 
 test("renders the application shell", async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!window.localStorage.getItem("stackwise.theme")) {
+      window.localStorage.setItem("stackwise.theme", "light");
+    }
+  });
   await page.route("/report.json", async (route) => {
     await route.fulfill({
       contentType: "application/json",
@@ -149,6 +154,15 @@ test("renders the application shell", async ({ page }) => {
 
   await page.goto("/");
   await expect(page.getByText("Stackwise")).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(page.locator(".app")).toHaveAttribute("data-theme", "light");
+  await page.getByRole("button", { name: "Switch to dark theme" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page.locator(".app")).toHaveAttribute("data-theme", "dark");
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.getByRole("button", { name: "Switch to light theme" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await expect(page.locator("footer")).toContainText("4 symbols");
   await expect(page.locator("header").getByPlaceholder("Symbol, crate, module")).toHaveCount(0);
   await expect(page.locator("header").getByRole("combobox")).toHaveCount(0);
