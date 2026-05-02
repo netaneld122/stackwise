@@ -864,7 +864,7 @@ function AgentActions({ symbol }: { symbol: SymbolReport }) {
   return (
     <div className="agentActions" aria-label="AI stack optimization actions">
       <div className="agentActionsHeader">
-        <span>Optimize stack with</span>
+        <span>Optimize with AI</span>
         {busyAgent ? <em>Launching...</em> : null}
       </div>
       <div className="agentButtons">

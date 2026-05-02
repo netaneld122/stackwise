@@ -1,3 +1,5 @@
+#[cfg(windows)]
+use std::ffi::OsString;
 use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -761,8 +763,7 @@ fn launch_agent_shell(script_path: &Path, agent: AgentKind) -> anyhow::Result<()
     #[cfg(windows)]
     {
         Command::new("cmd")
-            .args(["/C", "start", agent.label(), "cmd", "/K"])
-            .arg(script_path)
+            .args(windows_agent_shell_args(script_path))
             .spawn()
             .context("failed to start cmd")?;
         Ok(())
@@ -800,6 +801,18 @@ fn launch_agent_shell(script_path: &Path, agent: AgentKind) -> anyhow::Result<()
 
     #[cfg(not(any(windows, unix)))]
     anyhow::bail!("agent shell launch is not supported on this platform");
+}
+
+#[cfg(windows)]
+fn windows_agent_shell_args(script_path: &Path) -> [OsString; 6] {
+    [
+        OsString::from("/C"),
+        OsString::from("start"),
+        OsString::from(""),
+        OsString::from("cmd"),
+        OsString::from("/K"),
+        script_path.as_os_str().to_os_string(),
+    ]
 }
 
 fn source_snippet(symbol: &SymbolReport, report: &StackwiseReport) -> Option<SourceSnippet> {
@@ -1239,6 +1252,8 @@ static UI_ASSETS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/assets/app");
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    use super::windows_agent_shell_args;
     use super::{
         resolve_rust_std_source_path_with_roots, rust_library_relative_path,
         sanitize_file_component, ui_asset_path, AgentHandoffRequest,
@@ -1317,6 +1332,20 @@ mod tests {
 
         assert_eq!(request.agent.slug(), "codex");
         assert_eq!(request.symbol_id, 42);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_agent_shell_args_use_empty_start_title() {
+        let script = PathBuf::from(r"D:\repo\target\stackwise\handoff.cmd");
+        let args = windows_agent_shell_args(&script);
+
+        assert_eq!(args[0], "/C");
+        assert_eq!(args[1], "start");
+        assert_eq!(args[2], "");
+        assert_eq!(args[3], "cmd");
+        assert_eq!(args[4], "/K");
+        assert_eq!(args[5], script.as_os_str());
     }
 
     fn unique_temp_dir() -> PathBuf {

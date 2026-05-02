@@ -251,6 +251,7 @@ test("renders the application shell", async ({ page }) => {
   await leafNode.click();
   await expect(page.getByRole("button", { name: "Send symbol to Claude" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Send symbol to Cursor" })).toBeVisible();
+  await expect(page.getByText("Optimize with AI")).toBeVisible();
   await page.getByRole("button", { name: "Send symbol to Codex" }).click();
   await expect(page.locator(".agentStatus.success")).toContainText("Started Codex");
   expect(agentRequest).toEqual({ agent: "codex", symbol_id: 1 });
