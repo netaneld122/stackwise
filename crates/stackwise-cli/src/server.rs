@@ -1028,7 +1028,7 @@ fn windows_agent_shell_args(script_path: &Path) -> [OsString; 6] {
         OsString::from("start"),
         OsString::from(""),
         OsString::from("cmd"),
-        OsString::from("/K"),
+        OsString::from("/C"),
         script_path.as_os_str().to_os_string(),
     ]
 }
@@ -1823,7 +1823,7 @@ mod tests {
         assert_eq!(args[1], "start");
         assert_eq!(args[2], "");
         assert_eq!(args[3], "cmd");
-        assert_eq!(args[4], "/K");
+        assert_eq!(args[4], "/C");
         assert_eq!(args[5], script.as_os_str());
     }
 
