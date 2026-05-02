@@ -113,7 +113,10 @@ test("renders the application shell", async ({ page }) => {
         disassembly: {
           architecture: "x86_64 / nasm",
           syntax: "nasm",
-          instructions: [{ address: "0x2", bytes: "c3", text: "ret" }],
+          instructions: [
+            { address: "0x2", bytes: "48 83 ec 20", text: "sub rsp, 20h" },
+            { address: "0x6", bytes: "c3", text: "ret" },
+          ],
         },
         messages: [],
       }),
@@ -215,10 +218,27 @@ test("renders the application shell", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Open source" })).toHaveCount(0);
   const sourceSnippet = page.locator('.codePanel .codeBlock[title="Open full source file focused on this function"]');
   await expect(sourceSnippet).toBeVisible();
+  await expect(sourceSnippet.locator(".tokKeyword").filter({ hasText: "fn" })).toBeVisible();
+  await expect(sourceSnippet.locator(".tokFunction").filter({ hasText: "leaf" })).toBeVisible();
+  await expect(sourceSnippet.locator(".tokType").filter({ hasText: "usize" })).toBeVisible();
+  await expect(sourceSnippet.locator(".tokNumber").filter({ hasText: "24" })).toBeVisible();
+  const disassemblySnippet = page.locator('.codePanel .codeBlock[title="Open disassembly in a larger view"]');
+  await expect(disassemblySnippet.locator(".tokMnemonic").filter({ hasText: "sub" })).toBeVisible();
+  await expect(disassemblySnippet.locator(".tokRegister").filter({ hasText: "rsp" })).toBeVisible();
+  await expect(disassemblySnippet.locator(".tokNumber").filter({ hasText: "20h" })).toBeVisible();
   await sourceSnippet.click();
   await expect(page.locator("body > .codeModal")).toBeVisible();
   await expect(page.locator("#codeModalTitle")).toHaveText("Full file");
   await expect(page.locator(".codeModal").getByText("fn leaf() -> usize {")).toBeVisible();
+  await expect(page.locator(".codeModal .codeLine.highlight .tokKeyword").filter({ hasText: "fn" })).toBeVisible();
+  await expect(page.locator(".codeModal .codeLine.highlight .tokFunction").filter({ hasText: "leaf" })).toBeVisible();
+  await page.locator(".codeModal").getByRole("button", { name: "Close" }).click();
+  await expect(page.locator("body > .codeModal")).toHaveCount(0);
+  await disassemblySnippet.click();
+  await expect(page.locator("body > .codeModal")).toBeVisible();
+  await expect(page.locator("#codeModalTitle")).toHaveText("Disassembly");
+  await expect(page.locator(".codeModal .tokMnemonic").filter({ hasText: "sub" })).toBeVisible();
+  await expect(page.locator(".codeModal .tokRegister").filter({ hasText: "rsp" })).toBeVisible();
 });
 
 test("renders call graph minimap nodes for larger reports", async ({ page }) => {

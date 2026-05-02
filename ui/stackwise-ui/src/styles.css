@@ -803,6 +803,11 @@ dd {
   grid-template-columns: 92px 120px minmax(0, 1fr);
 }
 
+.codeText {
+  min-width: 0;
+  overflow: visible;
+}
+
 .codeLine.highlight {
   background: rgba(20, 184, 166, 0.16);
 }
@@ -815,6 +820,63 @@ dd {
   text-overflow: ellipsis;
   color: #74839a;
   user-select: none;
+}
+
+.tokKeyword {
+  color: #7dd3fc;
+  font-weight: 700;
+}
+
+.tokType {
+  color: #c4b5fd;
+  font-weight: 650;
+}
+
+.tokConstant {
+  color: #f9a8d4;
+  font-weight: 650;
+}
+
+.tokFunction {
+  color: #86efac;
+  font-weight: 700;
+}
+
+.tokMacro {
+  color: #f0abfc;
+  font-weight: 700;
+}
+
+.tokString {
+  color: #fbbf24;
+}
+
+.tokNumber {
+  color: #fca5a5;
+}
+
+.tokComment {
+  color: #718096;
+  font-style: italic;
+}
+
+.tokOperator,
+.tokPunctuation {
+  color: #9fb0c9;
+}
+
+.tokMnemonic {
+  color: #5eead4;
+  font-weight: 800;
+}
+
+.tokRegister {
+  color: #93c5fd;
+  font-weight: 700;
+}
+
+.tokSymbol {
+  color: #fde68a;
 }
 
 .contextMessage {

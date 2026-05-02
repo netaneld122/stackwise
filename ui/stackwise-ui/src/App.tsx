@@ -767,6 +767,79 @@ function Details({ symbol }: { symbol: SymbolReport | null }) {
 }
 
 type CodeModalKind = "source" | "disassembly" | "file";
+type CodeToken = { text: string; className?: string };
+type DisassemblyContext = NonNullable<SymbolContext["disassembly"]>;
+
+const rustKeywords = new Set([
+  "as",
+  "async",
+  "await",
+  "break",
+  "const",
+  "continue",
+  "crate",
+  "dyn",
+  "else",
+  "enum",
+  "extern",
+  "false",
+  "fn",
+  "for",
+  "if",
+  "impl",
+  "in",
+  "let",
+  "loop",
+  "match",
+  "mod",
+  "move",
+  "mut",
+  "pub",
+  "ref",
+  "return",
+  "self",
+  "Self",
+  "static",
+  "struct",
+  "super",
+  "trait",
+  "true",
+  "type",
+  "unsafe",
+  "use",
+  "where",
+  "while",
+]);
+const rustTypes = new Set([
+  "bool",
+  "char",
+  "f32",
+  "f64",
+  "i8",
+  "i16",
+  "i32",
+  "i64",
+  "i128",
+  "isize",
+  "str",
+  "String",
+  "u8",
+  "u16",
+  "u32",
+  "u64",
+  "u128",
+  "usize",
+  "Option",
+  "Result",
+  "Vec",
+]);
+const rustConstants = new Set(["Err", "None", "Ok", "Some"]);
+const rustTokenPattern =
+  /\/\/.*|r#*"[^"]*"#*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])'|\b(?:0x[0-9a-fA-F_]+|\d[\d_]*)\b|[A-Za-z_][A-Za-z0-9_]*!?|->|=>|::|[{}()[\];,.<>:+\-*/%=!&|^?#]/g;
+const asmRegisterPattern =
+  /^(?:r(?:[0-9]+[bwd]?|[abcd]x|[sd]i|[sb]p)|e[abcd]x|[abcd][lh]|[abcd]x|[sd]i|[sb]p|rip|eip|ip|xmm\d+|ymm\d+|zmm\d+|k\d+)$/i;
+const asmInstructionPattern =
+  /(0x[0-9a-fA-F]+|[0-9a-fA-F]+h|\b\d+\b|[A-Za-z_.$?@][\w.$?@]*|[\[\]()+\-*/,.:])/g;
 
 function CodePanel({
   context,
@@ -817,7 +890,7 @@ function CodePanel({
           {context.source.lines.map((line) => (
             <div className={`codeLine${line.highlight ? " highlight" : ""}`} key={line.number}>
               <span className="lineNo">{line.number}</span>
-              <span>{line.text}</span>
+              <span className="codeText">{renderHighlightedSourceLine(line.text, context.source?.language)}</span>
             </div>
           ))}
         </div>
@@ -836,14 +909,7 @@ function CodePanel({
             }
           }}
         >
-          <div className="codeTitle"><span>Disassembly</span><span>{context.disassembly.architecture}</span></div>
-          {context.disassembly.instructions.map((line) => (
-            <div className="codeLine asmLine" key={`${line.address}-${line.bytes}`}>
-              <span className="address">{line.address}</span>
-              <span className="bytes">{line.bytes}</span>
-              <span>{line.text}</span>
-            </div>
-          ))}
+          <DisassemblyLines disassembly={context.disassembly} />
         </div>
       ) : null}
       {context.messages.map((message) => <p className="contextMessage" key={message}>{message}</p>)}
@@ -934,16 +1000,7 @@ function CodeModal({
             <SourceLines source={context.source} title="Implementation" />
           ) : null}
           {kind === "disassembly" && context.disassembly ? (
-            <div className="codeBlock modalCodeBlock">
-              <div className="codeTitle"><span>Disassembly</span><span>{context.disassembly.architecture}</span></div>
-              {context.disassembly.instructions.map((line) => (
-                <div className="codeLine asmLine" key={`${line.address}-${line.bytes}`}>
-                  <span className="address">{line.address}</span>
-                  <span className="bytes">{line.bytes}</span>
-                  <span>{line.text}</span>
-                </div>
-              ))}
-            </div>
+            <div className="codeBlock modalCodeBlock"><DisassemblyLines disassembly={context.disassembly} /></div>
           ) : null}
           {kind === "file" && fullFileLoading ? <p className="contextMessage">Loading full source file...</p> : null}
           {kind === "file" && fullFileError ? <p className="contextMessage">Full source file unavailable: {fullFileError}</p> : null}
@@ -966,11 +1023,120 @@ function SourceLines({ source, title }: { source: SourceSnippet; title: string }
       {source.lines.map((line) => (
         <div className={`codeLine${line.highlight ? " highlight" : ""}`} key={line.number}>
           <span className="lineNo">{line.number}</span>
-          <span>{line.text}</span>
+          <span className="codeText">{renderHighlightedSourceLine(line.text, source.language)}</span>
         </div>
       ))}
     </div>
   );
+}
+
+function DisassemblyLines({ disassembly }: { disassembly: DisassemblyContext }) {
+  return (
+    <>
+      <div className="codeTitle"><span>Disassembly</span><span>{disassembly.architecture}</span></div>
+      {disassembly.instructions.map((line) => (
+        <div className="codeLine asmLine" key={`${line.address}-${line.bytes}`}>
+          <span className="address">{line.address}</span>
+          <span className="bytes">{line.bytes}</span>
+          <span className="codeText asmText">{renderHighlightedAsmInstruction(line.text)}</span>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function renderHighlightedSourceLine(text: string, language?: string | null): ReactNode {
+  if (!isRustLanguage(language)) return text;
+  return renderCodeTokens(tokenizeCode(text, rustTokenPattern, classifyRustToken));
+}
+
+function renderHighlightedAsmInstruction(text: string): ReactNode {
+  return renderCodeTokens(tokenizeAsmInstruction(text));
+}
+
+function isRustLanguage(language?: string | null): boolean {
+  if (!language) return false;
+  const normalized = language.toLowerCase();
+  return normalized === "rs" || normalized.includes("rust");
+}
+
+function tokenizeCode(
+  text: string,
+  pattern: RegExp,
+  classify: (token: string, start: number, line: string) => string | undefined,
+): CodeToken[] {
+  const tokens: CodeToken[] = [];
+  pattern.lastIndex = 0;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    const start = match.index;
+    const token = match[0];
+    if (start > cursor) tokens.push({ text: text.slice(cursor, start) });
+    tokens.push({ text: token, className: classify(token, start, text) });
+    cursor = start + token.length;
+  }
+  if (cursor < text.length) tokens.push({ text: text.slice(cursor) });
+  return tokens;
+}
+
+function classifyRustToken(token: string, start: number, line: string): string | undefined {
+  if (token.startsWith("//")) return "tokComment";
+  if (token.startsWith("\"") || token.startsWith("'") || token.startsWith("r")) {
+    if (/^(?:r#*"|["'])/.test(token)) return "tokString";
+  }
+  if (/^(?:0x[0-9a-fA-F_]+|\d[\d_]*)$/.test(token)) return "tokNumber";
+  if (rustKeywords.has(token)) return "tokKeyword";
+  if (rustTypes.has(token)) return "tokType";
+  if (rustConstants.has(token)) return "tokConstant";
+  if (/^[A-Za-z_][A-Za-z0-9_]*!$/.test(token)) return "tokMacro";
+  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(token) && /^\s*\(/.test(line.slice(start + token.length))) {
+    return "tokFunction";
+  }
+  if (/^(?:->|=>|::|[+\-*/%=!&|^?])$/.test(token)) return "tokOperator";
+  if (/^[{}()[\];,.<>:#]$/.test(token)) return "tokPunctuation";
+  return undefined;
+}
+
+function tokenizeAsmInstruction(text: string): CodeToken[] {
+  const commentIndex = findAsmCommentIndex(text);
+  const code = commentIndex >= 0 ? text.slice(0, commentIndex) : text;
+  const comment = commentIndex >= 0 ? text.slice(commentIndex) : "";
+  const tokens: CodeToken[] = [];
+  const mnemonicMatch = code.match(/^(\s*)([A-Za-z.][\w.]*)/);
+  let rest = code;
+  if (mnemonicMatch) {
+    if (mnemonicMatch[1]) tokens.push({ text: mnemonicMatch[1] });
+    tokens.push({ text: mnemonicMatch[2], className: "tokMnemonic" });
+    rest = code.slice(mnemonicMatch[0].length);
+  }
+  tokens.push(...tokenizeCode(rest, asmInstructionPattern, classifyAsmToken));
+  if (comment) tokens.push({ text: comment, className: "tokComment" });
+  return tokens;
+}
+
+function findAsmCommentIndex(text: string): number {
+  const semicolon = text.indexOf(";");
+  const hash = text.indexOf("#");
+  if (semicolon < 0) return hash;
+  if (hash < 0) return semicolon;
+  return Math.min(semicolon, hash);
+}
+
+function classifyAsmToken(token: string): string | undefined {
+  if (/^(?:0x[0-9a-fA-F]+|[0-9a-fA-F]+h|\d+)$/.test(token)) return "tokNumber";
+  if (asmRegisterPattern.test(token)) return "tokRegister";
+  if (/^[A-Za-z_.$?@][\w.$?@]*$/.test(token)) return "tokSymbol";
+  if (/^[\[\]()+\-*/,.:]$/.test(token)) return "tokPunctuation";
+  return undefined;
+}
+
+function renderCodeTokens(tokens: CodeToken[]): ReactNode {
+  return tokens.map((token, index) => (
+    token.className
+      ? <span className={token.className} key={index}>{token.text}</span>
+      : <span key={index}>{token.text}</span>
+  ));
 }
 
 function TreemapCanvas({
