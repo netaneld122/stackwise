@@ -553,7 +553,7 @@ function Shell({
         {toolbar}
         <button className="themeToggle" type="button" aria-label={themeLabel} title={themeLabel} onClick={toggleTheme}>
           <ThemeIcon size={15} />
-          <span>{theme === "dark" ? "Dark" : "Light"}</span>
+          <span>{theme === "dark" ? "Light" : "Dark"}</span>
         </button>
       </header>
       <aside>{left}</aside>
