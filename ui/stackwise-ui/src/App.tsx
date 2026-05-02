@@ -23,7 +23,7 @@ import {
   type Node as FlowNode,
   type NodeProps,
 } from "@xyflow/react";
-import { GitBranch, Grid2X2, RotateCcw, Search } from "lucide-react";
+import { GitBranch, Grid2X2, Pin, Redo2, RotateCcw, Search, Undo2 } from "lucide-react";
 import {
   buildFocusedCallGraph,
   chooseDefaultRoot,
@@ -51,6 +51,32 @@ import { useStackwiseStore } from "./store";
 import { buildTreemap, type TreemapRect } from "./treemap";
 
 type GraphLayout = "TB" | "LR" | "RL" | "BT";
+type GraphNavigationMode = "default" | "focus" | "callers";
+type GraphNavigationState = {
+  rootId: number | null;
+  callerDepth: number;
+  calleeDepth: number;
+  layout: GraphLayout;
+  edgeKinds: EdgeKind[];
+  mode: GraphNavigationMode;
+  actionSymbolId: number | null;
+};
+type GraphNavigationHistory = {
+  past: GraphNavigationState[];
+  present: GraphNavigationState;
+  future: GraphNavigationState[];
+};
+
+const defaultGraphEdgeKinds: EdgeKind[] = ["direct_call", "tail_call", "indirect_call", "external_call"];
+const defaultGraphNavigationState: GraphNavigationState = {
+  rootId: null,
+  callerDepth: 0,
+  calleeDepth: 4,
+  layout: "TB",
+  edgeKinds: defaultGraphEdgeKinds,
+  mode: "default",
+  actionSymbolId: null,
+};
 
 const graphLayoutOptions: Array<{ value: GraphLayout; label: string }> = [
   { value: "TB", label: "Top down" },
@@ -118,43 +144,77 @@ function ReportView({ report }: { report: StackwiseReport }) {
   );
   const selected = selectedSymbol();
   const visibleSymbolIds = useMemo(() => new Set(symbols.map((symbol) => symbol.id)), [symbols]);
-  const [graphRootId, setGraphRootId] = useState<number | null>(null);
-  const [callerDepth, setCallerDepth] = useState(0);
-  const [calleeDepth, setCalleeDepth] = useState(4);
-  const [graphLayout, setGraphLayout] = useState<GraphLayout>("TB");
-  const [edgeKinds, setEdgeKinds] = useState<Set<EdgeKind>>(
-    () => new Set(["direct_call", "tail_call", "indirect_call", "external_call"]),
-  );
+  const [graphHistory, setGraphHistory] = useState<GraphNavigationHistory>(() => initialGraphHistory());
+  const graphState = graphHistory.present;
+  const { rootId: graphRootId, callerDepth, calleeDepth, layout: graphLayout } = graphState;
+  const edgeKinds = useMemo(() => new Set(graphState.edgeKinds), [graphState.edgeKinds]);
   const status = `${report.artifact.file_name} | ${report.summary.symbol_count} symbols | ${report.summary.known_frame_count} known | ${report.summary.unknown_frame_count} unknown`;
   const primaryCrate = primaryCrateName(report);
   const defaultGraphRoot = useMemo(
     () => chooseDefaultRoot(report, symbols, selected?.id ?? null),
     [report, symbols, selected?.id],
   );
-  const effectiveGraphRoot = graphRootId != null && visibleSymbolIds.has(graphRootId)
-    ? graphRootId
-    : defaultGraphRoot;
+  const graphRootIsVisible = graphRootId == null || visibleSymbolIds.has(graphRootId);
+  const effectiveGraphRoot = graphRootId != null && graphRootIsVisible ? graphRootId : defaultGraphRoot;
+  const effectiveGraphMode = graphRootIsVisible ? graphState.mode : "default";
+  const graphFocusSymbolId = effectiveGraphMode === graphState.mode
+    ? graphState.actionSymbolId ?? effectiveGraphRoot
+    : effectiveGraphRoot;
+  const graphFocusSymbol = report.symbols.find(
+    (symbol) => symbol.id === graphFocusSymbolId,
+  ) ?? null;
 
   useEffect(() => {
-    if (viewMode === "call_graph" && graphRootId == null && defaultGraphRoot != null) {
-      setGraphRootId(defaultGraphRoot);
+    setGraphHistory(initialGraphHistory());
+  }, [report]);
+
+  useEffect(() => {
+    if (viewMode === "call_graph" && graphState.rootId == null && defaultGraphRoot != null) {
+      setGraphHistory((current) => ({
+        ...current,
+        present: {
+          ...current.present,
+          rootId: defaultGraphRoot,
+          mode: "default",
+          actionSymbolId: null,
+        },
+      }));
     }
-  }, [defaultGraphRoot, graphRootId, viewMode]);
+  }, [defaultGraphRoot, graphState.rootId, viewMode]);
+
+  const commitGraphNavigation = (update: (current: GraphNavigationState) => GraphNavigationState) => {
+    setGraphHistory((current) => pushGraphNavigation(current, update(current.present)));
+  };
 
   const toggleEdgeKind = (kind: EdgeKind) => {
-    setEdgeKinds((current) => {
-      const next = new Set(current);
+    commitGraphNavigation((current) => {
+      const next = new Set(current.edgeKinds);
       if (next.has(kind) && next.size > 1) next.delete(kind);
       else next.add(kind);
-      return next;
+      return { ...current, edgeKinds: orderedEdgeKinds(next) };
     });
   };
-  const pivotToSymbol = (symbolId: number) => setGraphRootId(symbolId);
+  const setCallerDepth = (callerDepth: number) => commitGraphNavigation((current) => ({ ...current, callerDepth }));
+  const setCalleeDepth = (calleeDepth: number) => commitGraphNavigation((current) => ({ ...current, calleeDepth }));
+  const setGraphLayout = (layout: GraphLayout) => commitGraphNavigation((current) => ({ ...current, layout }));
+  const undoGraphNavigation = () => setGraphHistory(undoGraphHistory);
+  const redoGraphNavigation = () => setGraphHistory(redoGraphHistory);
+  const pivotToSymbol = (symbolId: number) => commitGraphNavigation((current) => ({
+    ...current,
+    rootId: symbolId,
+    mode: "focus",
+    actionSymbolId: symbolId,
+  }));
   const showCallersForSymbol = (symbolId: number) => {
-    setGraphRootId(symbolId);
-    setCallerDepth(3);
-    setCalleeDepth(0);
-    setGraphLayout("TB");
+    commitGraphNavigation((current) => ({
+      ...current,
+      rootId: symbolId,
+      callerDepth: 3,
+      calleeDepth: 0,
+      layout: "TB",
+      mode: "callers",
+      actionSymbolId: symbolId,
+    }));
   };
 
   return (
@@ -213,7 +273,13 @@ function ReportView({ report }: { report: StackwiseReport }) {
             callerDepth={callerDepth}
             calleeDepth={calleeDepth}
             edgeKinds={edgeKinds}
+            focusMode={effectiveGraphMode}
+            focusSymbol={graphFocusSymbol}
             graphLayout={graphLayout}
+            canUndo={graphHistory.past.length > 0}
+            canRedo={graphHistory.future.length > 0}
+            onUndo={undoGraphNavigation}
+            onRedo={redoGraphNavigation}
             setCallerDepth={setCallerDepth}
             setCalleeDepth={setCalleeDepth}
             setGraphLayout={setGraphLayout}
@@ -247,7 +313,13 @@ function GraphControls({
   callerDepth,
   calleeDepth,
   edgeKinds,
+  focusMode,
+  focusSymbol,
   graphLayout,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
   setCallerDepth,
   setCalleeDepth,
   setGraphLayout,
@@ -256,15 +328,40 @@ function GraphControls({
   callerDepth: number;
   calleeDepth: number;
   edgeKinds: ReadonlySet<EdgeKind>;
+  focusMode: GraphNavigationMode;
+  focusSymbol: SymbolReport | null;
   graphLayout: GraphLayout;
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
   setCallerDepth: (value: number) => void;
   setCalleeDepth: (value: number) => void;
   setGraphLayout: (value: GraphLayout) => void;
   toggleEdgeKind: (kind: EdgeKind) => void;
 }) {
+  const focusLabel = focusMode === "callers" ? "Showing callers" : focusMode === "focus" ? "Pinned focus" : "Default root";
+  const FocusIcon = focusMode === "callers" ? GitBranch : focusMode === "focus" ? Pin : RotateCcw;
+  const focusTitle = focusSymbol
+    ? `${focusLabel}: ${focusSymbol.demangled}. Callers ${callerDepth}, callees ${calleeDepth}.`
+    : `${focusLabel}. Callers ${callerDepth}, callees ${calleeDepth}.`;
+
   return (
     <div className="middlePaneControls">
       <div className="graphToolbar" aria-label="Call graph controls">
+        <div className="graphHistoryControls" aria-label="Call graph history">
+          <button type="button" aria-label="Undo graph navigation" title="Undo graph navigation" disabled={!canUndo} onClick={onUndo}>
+            <Undo2 size={15} />
+          </button>
+          <button type="button" aria-label="Redo graph navigation" title="Redo graph navigation" disabled={!canRedo} onClick={onRedo}>
+            <Redo2 size={15} />
+          </button>
+        </div>
+        <div className={`graphFocusStatus ${focusMode}`} aria-live="polite" title={focusTitle}>
+          <FocusIcon size={14} />
+          <span>{focusLabel}</span>
+          <strong>{focusSymbol ? shortSymbolName(focusSymbol.demangled) : "No root"}</strong>
+        </div>
         <label>
           Layout
           <select
@@ -336,6 +433,61 @@ function ViewTabs({
       </button>
     </div>
   );
+}
+
+function initialGraphHistory(): GraphNavigationHistory {
+  return {
+    past: [],
+    present: { ...defaultGraphNavigationState, edgeKinds: [...defaultGraphNavigationState.edgeKinds] },
+    future: [],
+  };
+}
+
+function pushGraphNavigation(history: GraphNavigationHistory, next: GraphNavigationState): GraphNavigationHistory {
+  const normalizedNext = { ...next, edgeKinds: orderedEdgeKinds(new Set(next.edgeKinds)) };
+  if (sameGraphNavigationState(history.present, normalizedNext)) return history;
+  return {
+    past: [...history.past, history.present].slice(-50),
+    present: normalizedNext,
+    future: [],
+  };
+}
+
+function undoGraphHistory(history: GraphNavigationHistory): GraphNavigationHistory {
+  const previous = history.past.at(-1);
+  if (!previous) return history;
+  return {
+    past: history.past.slice(0, -1),
+    present: previous,
+    future: [history.present, ...history.future].slice(0, 50),
+  };
+}
+
+function redoGraphHistory(history: GraphNavigationHistory): GraphNavigationHistory {
+  const next = history.future[0];
+  if (!next) return history;
+  return {
+    past: [...history.past, history.present].slice(-50),
+    present: next,
+    future: history.future.slice(1),
+  };
+}
+
+function sameGraphNavigationState(left: GraphNavigationState, right: GraphNavigationState): boolean {
+  return (
+    left.rootId === right.rootId &&
+    left.callerDepth === right.callerDepth &&
+    left.calleeDepth === right.calleeDepth &&
+    left.layout === right.layout &&
+    left.mode === right.mode &&
+    left.actionSymbolId === right.actionSymbolId &&
+    left.edgeKinds.length === right.edgeKinds.length &&
+    left.edgeKinds.every((kind, index) => kind === right.edgeKinds[index])
+  );
+}
+
+function orderedEdgeKinds(kinds: ReadonlySet<EdgeKind>): EdgeKind[] {
+  return defaultGraphEdgeKinds.filter((kind) => kinds.has(kind));
 }
 
 function Shell({

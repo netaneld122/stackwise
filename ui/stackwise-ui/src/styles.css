@@ -313,6 +313,71 @@ canvas {
   flex-wrap: wrap;
 }
 
+.graphHistoryControls {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 3px;
+  height: 32px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 2px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.graphHistoryControls button {
+  width: 28px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0;
+  background: transparent;
+  color: #475467;
+}
+
+.graphHistoryControls button:not(:disabled):hover {
+  background: #eef8f6;
+  color: #0f766e;
+}
+
+.graphFocusStatus {
+  display: inline-flex;
+  flex: 1 1 230px;
+  min-width: 210px;
+  max-width: 420px;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  border: 1px solid rgba(196, 207, 220, 0.9);
+  border-radius: 8px;
+  padding: 0 10px;
+  background: rgba(255, 255, 255, 0.76);
+  color: #475467;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.graphFocusStatus svg {
+  flex: 0 0 auto;
+}
+
+.graphFocusStatus strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #172033;
+}
+
+.graphFocusStatus.focus {
+  border-color: rgba(15, 118, 110, 0.34);
+  background: linear-gradient(180deg, #ffffff 0%, #eef8f6 100%);
+  color: #0f766e;
+}
+
+.graphFocusStatus.callers {
+  border-color: rgba(37, 99, 235, 0.25);
+  background: linear-gradient(180deg, #ffffff 0%, #eef4ff 100%);
+  color: #2563eb;
+}
+
 .graphToolbar > label {
   display: inline-flex;
   align-items: center;
@@ -1181,9 +1246,15 @@ body.resizing * {
 
   .graphToolbar,
   .graphToolbar > label,
+  .graphFocusStatus,
   .paneMetricControl,
   .edgeToggles {
     width: 100%;
+  }
+
+  .graphHistoryControls {
+    width: 100%;
+    justify-content: center;
   }
 
   .paneMetricControl {
