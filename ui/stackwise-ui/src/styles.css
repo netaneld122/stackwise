@@ -139,7 +139,9 @@ section {
 }
 
 main {
-  position: relative;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
   background: #f7f9fb;
 }
 
@@ -147,6 +149,38 @@ canvas {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.middlePane {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.middlePaneDock {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.middlePaneControls {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line);
+  padding: 7px 10px;
+  background: rgba(247, 249, 251, 0.82);
+}
+
+.middlePaneBody {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
 }
 
 .treemapShell {
@@ -275,6 +309,8 @@ canvas {
   display: flex;
   align-items: center;
   gap: 7px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .graphToolbar > label {
@@ -313,6 +349,19 @@ canvas {
   border-color: rgba(15, 118, 110, 0.35);
   background: #eef8f6;
   color: #0f766e;
+}
+
+.paneMetricControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #475467;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.paneMetricControl select {
+  min-width: 136px;
 }
 
 .chip {
@@ -522,6 +571,7 @@ canvas {
 
 .detailCard {
   display: flex;
+  flex: 0 0 auto;
   min-height: 0;
   flex-direction: column;
   gap: 12px;
@@ -603,7 +653,8 @@ dd {
 
 .codePanel {
   display: flex;
-  min-height: 260px;
+  min-height: 0;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 10px;
   overflow: auto;
@@ -758,6 +809,34 @@ dd {
 
 .callGraphMiniMap .react-flow__minimap-node.root {
   stroke-width: 4px;
+}
+
+.graphContextMenu {
+  position: fixed;
+  z-index: 20;
+  display: grid;
+  min-width: 190px;
+  gap: 4px;
+  border: 1px solid rgba(196, 207, 220, 0.95);
+  border-radius: 10px;
+  padding: 5px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 20px 44px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(16px);
+}
+
+.graphContextMenu button {
+  justify-content: flex-start;
+  width: 100%;
+  border-color: transparent;
+  background: transparent;
+  color: #253044;
+}
+
+.graphContextMenu button:hover {
+  border-color: rgba(15, 118, 110, 0.24);
+  background: #eef8f6;
+  color: #0f766e;
 }
 
 .callNode {
@@ -1059,12 +1138,12 @@ body.resizing * {
     flex-wrap: wrap;
   }
 
-  .viewTabs {
-    order: 2;
-  }
-
   .searchBox {
     width: min(100%, 320px);
+  }
+
+  .middlePaneDock {
+    flex-wrap: wrap;
   }
 
   .graphToolbar {
@@ -1100,8 +1179,13 @@ body.resizing * {
 
   .graphToolbar,
   .graphToolbar > label,
+  .paneMetricControl,
   .edgeToggles {
     width: 100%;
+  }
+
+  .paneMetricControl {
+    flex-wrap: wrap;
   }
 
   .edgeToggles button {

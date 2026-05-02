@@ -94,6 +94,55 @@ test("renders the application shell", async ({ page }) => {
       }),
     });
   });
+  await page.route("/api/symbol-context**", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        source: {
+          file: "D:/demo/src/main.rs",
+          line: 7,
+          start_line: 5,
+          language: "rust",
+          lines: [
+            { number: 5, text: "#[inline(never)]", highlight: false },
+            { number: 6, text: "fn leaf() -> usize {", highlight: true },
+            { number: 7, text: "    24", highlight: false },
+            { number: 8, text: "}", highlight: false },
+          ],
+        },
+        disassembly: {
+          architecture: "x86_64 / nasm",
+          syntax: "nasm",
+          instructions: [{ address: "0x2", bytes: "c3", text: "ret" }],
+        },
+        messages: [],
+      }),
+    });
+  });
+  await page.route("/api/source-file**", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        source: {
+          file: "D:/demo/src/main.rs",
+          line: 7,
+          start_line: 1,
+          language: "rust",
+          lines: [
+            { number: 1, text: "fn main() {", highlight: false },
+            { number: 2, text: "    leaf();", highlight: false },
+            { number: 3, text: "}", highlight: false },
+            { number: 4, text: "", highlight: false },
+            { number: 5, text: "#[inline(never)]", highlight: false },
+            { number: 6, text: "fn leaf() -> usize {", highlight: true },
+            { number: 7, text: "    24", highlight: false },
+            { number: 8, text: "}", highlight: false },
+          ],
+        },
+        messages: [],
+      }),
+    });
+  });
 
   await page.goto("/");
   await expect(page.getByText("Stackwise")).toBeVisible();
@@ -112,12 +161,24 @@ test("renders the application shell", async ({ page }) => {
   await expect(stdCheckbox).not.toBeChecked();
   await expect(coreCheckbox).not.toBeChecked();
   await page.getByRole("tab", { name: "Call Graph" }).click();
-  await expect(page.getByRole("button", { name: "Pivot" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Who calls this?" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Pivot" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Who calls this?" })).toHaveCount(0);
   await expect(page.getByText("demo::main")).toBeVisible();
   await expect(page.getByText("demo::leaf")).toBeVisible();
   await expect(page.getByText("Cumulative").first()).toBeVisible();
   await expect(page.getByText("+24 B")).toBeVisible();
+  const leafNode = page.locator(".react-flow__node").filter({ hasText: "demo::leaf" });
+  await expect(leafNode).toHaveCount(1);
+  await leafNode.click({ button: "right" });
+  await expect(page.getByRole("menu")).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Focus here" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Show callers" }).click();
+  await expect(page.locator(".symbolNode.root")).toContainText("leaf");
+  await leafNode.click();
+  await expect(page.getByRole("button", { name: "Open source" })).toBeEnabled();
+  await page.getByRole("button", { name: "Open source" }).click();
+  await expect(page.locator("#codeModalTitle")).toHaveText("Full file");
+  await expect(page.locator(".codeModal").getByText("fn leaf() -> usize {")).toBeVisible();
 });
 
 test("renders call graph minimap nodes for larger reports", async ({ page }) => {

@@ -124,7 +124,6 @@ function ReportView({ report }: { report: StackwiseReport }) {
   const [edgeKinds, setEdgeKinds] = useState<Set<EdgeKind>>(
     () => new Set(["direct_call", "tail_call", "indirect_call", "external_call"]),
   );
-  const canPivotToSelected = selected != null && visibleSymbolIds.has(selected.id);
   const status = `${report.artifact.file_name} | ${report.summary.symbol_count} symbols | ${report.summary.known_frame_count} known | ${report.summary.unknown_frame_count} unknown`;
   const primaryCrate = primaryCrateName(report);
   const defaultGraphRoot = useMemo(
@@ -149,6 +148,13 @@ function ReportView({ report }: { report: StackwiseReport }) {
       return next;
     });
   };
+  const pivotToSymbol = (symbolId: number) => setGraphRootId(symbolId);
+  const showCallersForSymbol = (symbolId: number) => {
+    setGraphRootId(symbolId);
+    setCallerDepth(3);
+    setCalleeDepth(0);
+    setGraphLayout("TB");
+  };
 
   return (
     <Shell
@@ -162,82 +168,11 @@ function ReportView({ report }: { report: StackwiseReport }) {
             <span className="chip">Unknown <strong>{report.summary.unknown_frame_count.toLocaleString()}</strong></span>
             <span className="chip">Confidence <strong>{report.summary.confidence}</strong></span>
           </div>
-          <ViewTabs viewMode={viewMode} setViewMode={setViewMode} />
           <div className="controls">
             <div className="searchBox">
               <Search size={16} />
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Symbol, crate, module" />
             </div>
-            {viewMode === "treemap" ? (
-              <select value={metric} onChange={(event) => setMetric(event.target.value as Metric)}>
-                <option value="own">Own frame</option>
-                <option value="worst">Worst path</option>
-                <option value="code">Code size</option>
-                <option value="risk">Unresolved risk</option>
-              </select>
-            ) : (
-              <div className="graphToolbar" aria-label="Call graph controls">
-                <button
-                  type="button"
-                  disabled={!canPivotToSelected}
-                  onClick={() => selected && setGraphRootId(selected.id)}
-                  title="Make the selected symbol the center of the call graph."
-                >
-                  <RotateCcw size={14} /> Pivot
-                </button>
-                <button
-                  type="button"
-                  disabled={!canPivotToSelected}
-                  onClick={() => {
-                    if (!selected) return;
-                    setGraphRootId(selected.id);
-                    setCallerDepth(3);
-                    setCalleeDepth(0);
-                    setGraphLayout("TB");
-                  }}
-                  title="Show incoming callers for the selected symbol."
-                >
-                  <GitBranch size={14} /> Who calls this?
-                </button>
-                <label>
-                  Layout
-                  <select
-                    className="graphLayoutSelect"
-                    value={graphLayout}
-                    onChange={(event) => setGraphLayout(event.target.value as GraphLayout)}
-                  >
-                    {graphLayoutOptions.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Callers
-                  <select value={callerDepth} onChange={(event) => setCallerDepth(Number(event.target.value))}>
-                    {[0, 1, 2, 3].map((value) => <option key={value} value={value}>{value}</option>)}
-                  </select>
-                </label>
-                <label>
-                  Callees
-                  <select value={calleeDepth} onChange={(event) => setCalleeDepth(Number(event.target.value))}>
-                    {[0, 1, 2, 3, 4, 5, 6].map((value) => <option key={value} value={value}>{value}</option>)}
-                  </select>
-                </label>
-                <div className="edgeToggles" aria-label="Call edge filters">
-                  {(["direct_call", "tail_call", "indirect_call", "external_call"] as EdgeKind[]).map((kind) => (
-                    <button
-                      className={edgeKinds.has(kind) ? "active" : ""}
-                      key={kind}
-                      type="button"
-                      onClick={() => toggleEdgeKind(kind)}
-                      title={edgeKindLabel(kind)}
-                    >
-                      {edgeKindShortLabel(kind)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
             <select value={confidence} onChange={(event) => setConfidence(event.target.value as ConfidenceFilter)}>
               <option value="all">All confidence</option>
               <option value="known">Known frames</option>
@@ -257,21 +192,117 @@ function ReportView({ report }: { report: StackwiseReport }) {
       }
       right={<Details symbol={selected} />}
     >
-      {viewMode === "treemap" ? (
-        <TreemapCanvas report={report} symbols={symbols} metric={metric} selectedId={selectedId} />
-      ) : (
-        <CallGraphView
-          report={report}
-          symbols={symbols}
-          rootId={effectiveGraphRoot}
-          callerDepth={callerDepth}
-          calleeDepth={calleeDepth}
-          edgeKinds={edgeKinds}
-          layout={graphLayout}
-          selectedId={selectedId}
-        />
-      )}
+      <div className="middlePane">
+        <div className="middlePaneDock">
+          <ViewTabs viewMode={viewMode} setViewMode={setViewMode} />
+          {viewMode === "treemap" ? (
+            <label className="paneMetricControl">
+              Metric
+              <select value={metric} onChange={(event) => setMetric(event.target.value as Metric)}>
+                <option value="own">Own frame</option>
+                <option value="worst">Worst path</option>
+                <option value="code">Code size</option>
+                <option value="risk">Unresolved risk</option>
+              </select>
+            </label>
+          ) : null}
+        </div>
+        {viewMode === "call_graph" ? (
+          <GraphControls
+            callerDepth={callerDepth}
+            calleeDepth={calleeDepth}
+            edgeKinds={edgeKinds}
+            graphLayout={graphLayout}
+            setCallerDepth={setCallerDepth}
+            setCalleeDepth={setCalleeDepth}
+            setGraphLayout={setGraphLayout}
+            toggleEdgeKind={toggleEdgeKind}
+          />
+        ) : null}
+        <div className="middlePaneBody">
+          {viewMode === "treemap" ? (
+            <TreemapCanvas report={report} symbols={symbols} metric={metric} selectedId={selectedId} />
+          ) : (
+            <CallGraphView
+              report={report}
+              symbols={symbols}
+              rootId={effectiveGraphRoot}
+              callerDepth={callerDepth}
+              calleeDepth={calleeDepth}
+              edgeKinds={edgeKinds}
+              layout={graphLayout}
+              selectedId={selectedId}
+              onPivotSymbol={pivotToSymbol}
+              onShowCallers={showCallersForSymbol}
+            />
+          )}
+        </div>
+      </div>
     </Shell>
+  );
+}
+
+function GraphControls({
+  callerDepth,
+  calleeDepth,
+  edgeKinds,
+  graphLayout,
+  setCallerDepth,
+  setCalleeDepth,
+  setGraphLayout,
+  toggleEdgeKind,
+}: {
+  callerDepth: number;
+  calleeDepth: number;
+  edgeKinds: ReadonlySet<EdgeKind>;
+  graphLayout: GraphLayout;
+  setCallerDepth: (value: number) => void;
+  setCalleeDepth: (value: number) => void;
+  setGraphLayout: (value: GraphLayout) => void;
+  toggleEdgeKind: (kind: EdgeKind) => void;
+}) {
+  return (
+    <div className="middlePaneControls">
+      <div className="graphToolbar" aria-label="Call graph controls">
+        <label>
+          Layout
+          <select
+            className="graphLayoutSelect"
+            value={graphLayout}
+            onChange={(event) => setGraphLayout(event.target.value as GraphLayout)}
+          >
+            {graphLayoutOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Callers
+          <select value={callerDepth} onChange={(event) => setCallerDepth(Number(event.target.value))}>
+            {[0, 1, 2, 3].map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
+        </label>
+        <label>
+          Callees
+          <select value={calleeDepth} onChange={(event) => setCalleeDepth(Number(event.target.value))}>
+            {[0, 1, 2, 3, 4, 5, 6].map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
+        </label>
+        <div className="edgeToggles" aria-label="Call edge filters">
+          {(["direct_call", "tail_call", "indirect_call", "external_call"] as EdgeKind[]).map((kind) => (
+            <button
+              className={edgeKinds.has(kind) ? "active" : ""}
+              key={kind}
+              type="button"
+              onClick={() => toggleEdgeKind(kind)}
+              title={edgeKindLabel(kind)}
+            >
+              {edgeKindShortLabel(kind)}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -507,16 +538,19 @@ function ModuleList({
 function Details({ symbol }: { symbol: SymbolReport | null }) {
   const [context, setContext] = useState<SymbolContext | null>(null);
   const [loading, setLoading] = useState(false);
+  const [popout, setPopout] = useState<CodeModalKind | null>(null);
 
   useEffect(() => {
     if (!symbol) {
       setContext(null);
       setLoading(false);
+      setPopout(null);
       return;
     }
     let cancelled = false;
     setContext(null);
     setLoading(true);
+    setPopout(null);
     fetch(`/api/symbol-context?id=${encodeURIComponent(symbol.id)}`)
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -575,11 +609,16 @@ function Details({ symbol }: { symbol: SymbolReport | null }) {
             <span className="pill" key={item}>{item}</span>
           ))}
         </div>
-        <button type="button" disabled>
+        <button
+          type="button"
+          disabled={!context?.source || loading}
+          title={context?.source ? `Open full source file: ${context.source.file}` : "No source file is available for this symbol."}
+          onClick={() => setPopout("file")}
+        >
           <SquareArrowOutUpRight size={15} /> Open source
         </button>
       </div>
-      <CodePanel context={context} loading={loading} symbol={symbol} />
+      <CodePanel context={context} loading={loading} popout={popout} setPopout={setPopout} symbol={symbol} />
     </>
   );
 }
@@ -589,18 +628,16 @@ type CodeModalKind = "source" | "disassembly" | "file";
 function CodePanel({
   context,
   loading,
+  popout,
+  setPopout,
   symbol,
 }: {
   context: SymbolContext | null;
   loading: boolean;
+  popout: CodeModalKind | null;
+  setPopout: (kind: CodeModalKind | null) => void;
   symbol: SymbolReport;
 }) {
-  const [popout, setPopout] = useState<CodeModalKind | null>(null);
-
-  useEffect(() => {
-    setPopout(null);
-  }, [context]);
-
   if (loading) return <div className="codePanel"><p className="contextMessage">Loading source and disassembly...</p></div>;
   if (!context) return <div className="codePanel"><p className="contextMessage">Select a symbol to load source and disassembly.</p></div>;
 
@@ -924,6 +961,8 @@ function CallGraphView({
   edgeKinds,
   layout,
   selectedId,
+  onPivotSymbol,
+  onShowCallers,
 }: {
   report: StackwiseReport;
   symbols: SymbolReport[];
@@ -933,8 +972,11 @@ function CallGraphView({
   edgeKinds: ReadonlySet<EdgeKind>;
   layout: GraphLayout;
   selectedId: number | null;
+  onPivotSymbol: (symbolId: number) => void;
+  onShowCallers: (symbolId: number) => void;
 }) {
   const { setSelectedId } = useStackwiseStore();
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; symbol: SymbolReport } | null>(null);
   const focused = useMemo(
     () =>
       buildFocusedCallGraph(report, symbols, {
@@ -956,6 +998,26 @@ function CallGraphView({
   );
   const initialFitMinZoom = nodes.length <= 6 ? 0.82 : nodes.length <= 24 ? 0.58 : 0.28;
 
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [contextMenu]);
+
+  useEffect(() => {
+    setContextMenu(null);
+  }, [fitKey]);
+
   if (focused.rootId == null) {
     return <div className="empty">No symbols match the current filters.</div>;
   }
@@ -975,9 +1037,26 @@ function CallGraphView({
         minZoom={0.2}
         maxZoom={1.6}
         nodesDraggable={false}
+        onPaneClick={() => setContextMenu(null)}
+        onPaneContextMenu={(event) => {
+          event.preventDefault();
+          setContextMenu(null);
+        }}
         onNodeClick={(_, node) => {
+          setContextMenu(null);
           const graphNode = node.data.graphNode;
           if ("symbol" in graphNode) setSelectedId(graphNode.symbol.id);
+        }}
+        onNodeContextMenu={(event, node) => {
+          event.preventDefault();
+          const graphNode = node.data.graphNode;
+          if (!("symbol" in graphNode)) return;
+          setSelectedId(graphNode.symbol.id);
+          setContextMenu({
+            x: Math.min(event.clientX, window.innerWidth - 220),
+            y: Math.min(event.clientY, window.innerHeight - 110),
+            symbol: graphNode.symbol,
+          });
         }}
       >
         <Background color="#dce5ee" gap={22} />
@@ -1005,6 +1084,36 @@ function CallGraphView({
           />
         ) : null}
       </ReactFlow>
+      {contextMenu ? (
+        <div
+          className="graphContextMenu"
+          role="menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              onPivotSymbol(contextMenu.symbol.id);
+              setContextMenu(null);
+            }}
+          >
+            <RotateCcw size={14} /> Focus here
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              onShowCallers(contextMenu.symbol.id);
+              setContextMenu(null);
+            }}
+          >
+            <GitBranch size={14} /> Show callers
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
