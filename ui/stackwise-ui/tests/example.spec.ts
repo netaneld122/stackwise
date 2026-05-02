@@ -202,6 +202,14 @@ test("renders the application shell", async ({ page }) => {
   await expect(page.locator("header").getByRole("combobox")).toHaveCount(0);
   await expect(page.locator("main").getByPlaceholder("Symbol, crate, module")).toBeVisible();
   await expect(page.locator(".paneToolbar").getByRole("combobox")).toHaveCount(2);
+  const selectAllButton = page.getByRole("button", { name: "Select all", exact: true });
+  const deselectAllButton = page.getByRole("button", { name: "Deselect all", exact: true });
+  await expect(selectAllButton).toBeVisible();
+  await expect(selectAllButton).toHaveCSS("cursor", "pointer");
+  await expect(deselectAllButton).toHaveCSS("cursor", "pointer");
+  const selectAllBackground = await selectAllButton.evaluate((node) => getComputedStyle(node).backgroundColor);
+  await selectAllButton.hover();
+  await expect(selectAllButton).not.toHaveCSS("background-color", selectAllBackground);
   const stdRow = page.getByRole("button", { name: "std 1 symbols" });
   const coreRow = page.getByRole("button", { name: "core 1 symbols" });
   const stdCheckbox = stdRow.getByRole("checkbox");
