@@ -311,16 +311,54 @@ fn agent_handoff_response(
         prompt_path: prompt_path.to_string_lossy().to_string(),
         context_path: context_path.to_string_lossy().to_string(),
         script_path: script_path.to_string_lossy().to_string(),
-        command: format!(
-            "{} -p \"Read the Stackwise optimization brief at {} and follow it.\"",
-            request.agent.program(),
-            prompt_path.display()
-        ),
+        command: request
+            .agent
+            .command_preview(&agent_prompt_for_path(&prompt_path)),
         message: format!(
             "Started {} with a Stackwise stack-optimization brief.",
             request.agent.label()
         ),
     })
+}
+
+fn agent_prompt_for_path(prompt_path: &Path) -> String {
+    format!(
+        "Read the Stackwise optimization brief at {} and follow it.",
+        prompt_path.display()
+    )
+}
+
+#[cfg(not(windows))]
+fn agent_prompt_command(agent: AgentKind, prompt: &str) -> String {
+    match agent {
+        AgentKind::Opencode => format!(
+            "{} run {}",
+            shell_quote(agent.program()),
+            shell_quote(prompt)
+        ),
+        _ => format!(
+            "{} -p {}",
+            shell_quote(agent.program()),
+            shell_quote(prompt)
+        ),
+    }
+}
+
+#[cfg(windows)]
+fn windows_agent_prompt_command(agent: AgentKind) -> String {
+    match agent {
+        AgentKind::Opencode => "opencode run \"%STACKWISE_PROMPT%\"".to_owned(),
+        _ => format!("{} -p \"%STACKWISE_PROMPT%\"", agent.program()),
+    }
+}
+
+impl AgentKind {
+    fn command_preview(self, prompt: &str) -> String {
+        match self {
+            AgentKind::Opencode => format!("{} run \"{}\"", self.program(), prompt),
+            _ => format!("{} -p \"{}\"", self.program(), prompt),
+        }
+    }
 }
 
 fn query_param(url: &str, name: &str) -> Option<String> {
@@ -682,10 +720,7 @@ fn write_agent_script(
     prompt_path: &Path,
     report: &StackwiseReport,
 ) -> anyhow::Result<()> {
-    let prompt = format!(
-        "Read the Stackwise optimization brief at {} and follow it.",
-        prompt_path.display()
-    );
+    let prompt = agent_prompt_for_path(prompt_path);
     let cwd = report
         .build
         .as_ref()
@@ -697,26 +732,25 @@ fn write_agent_script(
     #[cfg(windows)]
     {
         let script = format!(
-            "@echo off\r\ncd /d \"{}\"\r\nset \"STACKWISE_PROMPT={}\"\r\nset \"STACKWISE_PROMPT_FILE={}\"\r\necho Stackwise launching {} for stack optimization...\r\necho Prompt: \"%STACKWISE_PROMPT_FILE%\"\r\n{} -p \"%STACKWISE_PROMPT%\"\r\necho.\r\necho Agent exited with %ERRORLEVEL%.\r\n",
+            "@echo off\r\ncd /d \"{}\"\r\nset \"STACKWISE_PROMPT={}\"\r\nset \"STACKWISE_PROMPT_FILE={}\"\r\necho Stackwise launching {} for stack optimization...\r\necho Prompt: \"%STACKWISE_PROMPT_FILE%\"\r\n{}\r\necho.\r\necho Agent exited with %ERRORLEVEL%.\r\n",
             escape_batch_quoted(&cwd.to_string_lossy()),
             escape_batch_env(&prompt),
             escape_batch_env(&prompt_path.to_string_lossy()),
             agent.label(),
-            agent.program()
+            windows_agent_prompt_command(agent)
         );
         fs::write(script_path, script)?;
     }
     #[cfg(not(windows))]
     {
         let script = format!(
-            "#!/usr/bin/env sh\ncd {}\nprintf '%s\\n' {}\n{} -p {}\n",
+            "#!/usr/bin/env sh\ncd {}\nprintf '%s\\n' {}\n{}\n",
             shell_quote(&cwd.to_string_lossy()),
             shell_quote(&format!(
                 "Stackwise launching {} for stack optimization...",
                 agent.label()
             )),
-            shell_quote(agent.program()),
-            shell_quote(&prompt)
+            agent_prompt_command(agent, &prompt)
         );
         fs::write(script_path, script)?;
         make_executable(script_path)?;
@@ -1144,6 +1178,7 @@ enum AgentKind {
     Claude,
     Codex,
     Cursor,
+    Opencode,
 }
 
 impl AgentKind {
@@ -1152,6 +1187,7 @@ impl AgentKind {
             AgentKind::Claude => "claude",
             AgentKind::Codex => "codex",
             AgentKind::Cursor => "cursor",
+            AgentKind::Opencode => "opencode",
         }
     }
 
@@ -1160,6 +1196,7 @@ impl AgentKind {
             AgentKind::Claude => "Claude",
             AgentKind::Codex => "Codex",
             AgentKind::Cursor => "Cursor",
+            AgentKind::Opencode => "OpenCode",
         }
     }
 
@@ -1168,6 +1205,7 @@ impl AgentKind {
             AgentKind::Claude => "claude",
             AgentKind::Codex => "codex",
             AgentKind::Cursor => "cursor-agent",
+            AgentKind::Opencode => "opencode",
         }
     }
 }
@@ -1332,6 +1370,18 @@ mod tests {
 
         assert_eq!(request.agent.slug(), "codex");
         assert_eq!(request.symbol_id, 42);
+
+        let request: AgentHandoffRequest =
+            serde_json::from_str(r#"{"agent":"opencode","symbol_id":7}"#)
+                .expect("opencode request is decoded");
+
+        assert_eq!(request.agent.slug(), "opencode");
+        assert_eq!(request.agent.program(), "opencode");
+        assert_eq!(
+            request.agent.command_preview("Read the Stackwise brief."),
+            "opencode run \"Read the Stackwise brief.\""
+        );
+        assert_eq!(request.symbol_id, 7);
     }
 
     #[cfg(windows)]

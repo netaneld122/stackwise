@@ -894,6 +894,10 @@ dd {
   color: #111827;
 }
 
+.agentButton.opencode {
+  color: #656363;
+}
+
 .agentButton:hover:not(:disabled),
 .agentButton:focus-visible {
   border-color: rgba(20, 184, 166, 0.56);
@@ -918,8 +922,14 @@ dd {
   height: 18px;
 }
 
+.opencodeLogo {
+  width: 18px;
+  height: 22px;
+}
+
 :root[data-theme="dark"] .agentButton.codex,
-:root[data-theme="dark"] .agentButton.cursor {
+:root[data-theme="dark"] .agentButton.cursor,
+:root[data-theme="dark"] .agentButton.opencode {
   color: #f8fafc;
 }
 
