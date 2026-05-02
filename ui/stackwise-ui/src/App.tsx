@@ -1796,13 +1796,17 @@ function CallGraphView({
       }),
     [calleeDepth, callerDepth, edgeKinds, report, rootId, symbols],
   );
+  const visibleGraph = useMemo(
+    () => worstPathGraphSlice(focused.nodes, focused.edges, highlightedWorstBranchRootId),
+    [focused.edges, focused.nodes, highlightedWorstBranchRootId],
+  );
   const { nodes, edges } = useMemo(
-    () => layoutFlowGraph(focused.nodes, focused.edges, report, selectedId, layout, highlightedWorstBranchRootId),
-    [focused, highlightedWorstBranchRootId, layout, report, selectedId],
+    () => layoutFlowGraph(visibleGraph.nodes, visibleGraph.edges, report, selectedId, layout, highlightedWorstBranchRootId),
+    [highlightedWorstBranchRootId, layout, report, selectedId, visibleGraph],
   );
   const fitKey = useMemo(
-    () => `${focused.rootId}:${layout}:${callerDepth}:${calleeDepth}:${[...edgeKinds].sort().join(",")}:${symbols.length}`,
-    [calleeDepth, callerDepth, edgeKinds, focused.rootId, layout, symbols.length],
+    () => `${focused.rootId}:${highlightedWorstBranchRootId ?? "all"}:${layout}:${callerDepth}:${calleeDepth}:${[...edgeKinds].sort().join(",")}:${symbols.length}`,
+    [calleeDepth, callerDepth, edgeKinds, focused.rootId, highlightedWorstBranchRootId, layout, symbols.length],
   );
   const initialFitMinZoom = nodes.length <= 6 ? 0.82 : nodes.length <= 24 ? 0.58 : 0.28;
 
@@ -2000,20 +2004,6 @@ function layoutFlowGraph(
   for (const edge of graphEdges) graph.setEdge(edge.source, edge.target);
   dagre.layout(graph);
 
-  const highlightedBranchIds = highlightedWorstBranchRootId == null
-    ? null
-    : graphNodes.find(
-        (node): node is Extract<GraphNode, { symbol: SymbolReport }> =>
-          "symbol" in node && node.symbol.id === highlightedWorstBranchRootId,
-      )?.visibleWorstBranchIds ?? null;
-  const highlightedBranchSet = highlightedBranchIds ? new Set(highlightedBranchIds) : null;
-  const highlightedEdgePairs = new Set<string>();
-  if (highlightedBranchIds) {
-    for (let index = 0; index < highlightedBranchIds.length - 1; index += 1) {
-      highlightedEdgePairs.add(`${symbolNodeId(highlightedBranchIds[index])}->${symbolNodeId(highlightedBranchIds[index + 1])}`);
-    }
-  }
-
   const nodes = graphNodes.map<StackwiseFlowNode>((graphNode) => {
     const point = graph.node(graphNode.id) as { x: number; y: number } | undefined;
     const size = sizeById.get(graphNode.id) ?? { width: 200, height: 100 };
@@ -2033,7 +2023,7 @@ function layoutFlowGraph(
         color: symbol ? groupColor(symbol, report) : "#64748b",
         layout,
         selected: symbol?.id === selectedId,
-        dimmed: highlightedBranchSet != null && (symbol == null || !highlightedBranchSet.has(symbol.id)),
+        dimmed: false,
         branchHighlighted: symbol != null && highlightedWorstBranchRootId === symbol.id,
       },
       selected: symbol?.id === selectedId,
@@ -2048,10 +2038,45 @@ function layoutFlowGraph(
     type: "smoothstep",
     label: graphEdgeLabel(edge),
     markerEnd: { type: MarkerType.ArrowClosed },
-    className: `callEdge ${edge.kind}${highlightedEdgePairs.size > 0 && !highlightedEdgePairs.has(`${edge.source}->${edge.target}`) ? " dimmed" : ""}`,
+    className: `callEdge ${edge.kind}`,
   }));
 
   return { nodes, edges };
+}
+
+function worstPathGraphSlice(
+  graphNodes: GraphNode[],
+  graphEdges: ReturnType<typeof buildFocusedCallGraph>["edges"],
+  branchRootId: number | null,
+): { nodes: GraphNode[]; edges: ReturnType<typeof buildFocusedCallGraph>["edges"] } {
+  if (branchRootId == null) return { nodes: graphNodes, edges: graphEdges };
+
+  const branchRoot = graphNodes.find(
+    (node): node is Extract<GraphNode, { symbol: SymbolReport }> =>
+      "symbol" in node && node.symbol.id === branchRootId,
+  );
+  if (!branchRoot || branchRoot.visibleWorstBranchIds.length === 0) {
+    return { nodes: graphNodes, edges: graphEdges };
+  }
+
+  const branchSymbolIds = new Set(branchRoot.visibleWorstBranchIds);
+  const branchNodeIds = new Set([...branchSymbolIds].map(symbolNodeId));
+  const branchEdgePairs = new Set<string>();
+  for (let index = 0; index < branchRoot.visibleWorstBranchIds.length - 1; index += 1) {
+    branchEdgePairs.add(
+      `${symbolNodeId(branchRoot.visibleWorstBranchIds[index])}->${symbolNodeId(branchRoot.visibleWorstBranchIds[index + 1])}`,
+    );
+  }
+
+  return {
+    nodes: graphNodes.filter((node) => "symbol" in node && branchSymbolIds.has(node.symbol.id)),
+    edges: graphEdges.filter(
+      (edge) =>
+        branchNodeIds.has(edge.source) &&
+        branchNodeIds.has(edge.target) &&
+        branchEdgePairs.has(`${edge.source}->${edge.target}`),
+    ),
+  };
 }
 
 function shortSymbolName(name: string): string {
