@@ -844,6 +844,7 @@ dd {
   display: grid;
   flex: 0 0 auto;
   gap: 8px;
+  margin-block: 6px;
   border: 1px solid var(--context-border);
   border-radius: 8px;
   background: var(--context-bg);
