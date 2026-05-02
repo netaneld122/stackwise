@@ -402,6 +402,11 @@ fn agent_prompt_for_path(prompt_path: &Path) -> String {
 #[cfg(not(windows))]
 fn agent_prompt_command(agent: AgentKind, prompt: &str) -> String {
     match agent {
+        AgentKind::Codex => format!(
+            "{} exec {}",
+            shell_quote(agent.program()),
+            shell_quote(prompt)
+        ),
         AgentKind::Opencode => format!(
             "{} run {}",
             shell_quote(agent.program()),
@@ -418,6 +423,7 @@ fn agent_prompt_command(agent: AgentKind, prompt: &str) -> String {
 #[cfg(windows)]
 fn windows_agent_prompt_command(agent: AgentKind) -> String {
     match agent {
+        AgentKind::Codex => "codex exec \"%STACKWISE_PROMPT%\"".to_owned(),
         AgentKind::Opencode => "opencode run \"%STACKWISE_PROMPT%\"".to_owned(),
         _ => format!("{} -p \"%STACKWISE_PROMPT%\"", agent.program()),
     }
@@ -439,6 +445,7 @@ fn windows_agent_status_command(initial_state: AgentHandoffState) -> String {
 impl AgentKind {
     fn command_preview(self, prompt: &str) -> String {
         match self {
+            AgentKind::Codex => format!("{} exec \"{}\"", self.program(), prompt),
             AgentKind::Opencode => format!("{} run \"{}\"", self.program(), prompt),
             _ => format!("{} -p \"{}\"", self.program(), prompt),
         }
@@ -1657,6 +1664,10 @@ mod tests {
                 .expect("request is decoded");
 
         assert_eq!(request.agent.slug(), "codex");
+        assert_eq!(
+            request.agent.command_preview("Read the Stackwise brief."),
+            "codex exec \"Read the Stackwise brief.\""
+        );
         assert_eq!(request.symbol_id, 42);
 
         let request: AgentHandoffRequest =
@@ -1750,6 +1761,37 @@ mod tests {
         assert!(script.contains("STACKWISE_LOG_FILE"));
         assert!(script.contains("powershell -NoProfile"));
         assert!(script.contains("does not have access to Claude"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_codex_script_uses_exec_prompt_argument() {
+        let root = unique_temp_dir();
+        let script_path = root.join("launch.cmd");
+        let prompt_path = root.join("brief.prompt.md");
+        let context_path = root.join("brief.context.json");
+        let status_path = root.join("brief.status.json");
+        let log_path = root.join("brief.log");
+
+        fs::create_dir_all(&root).expect("temp root is created");
+        let report = minimal_report(root.to_string_lossy().as_ref());
+        write_agent_script(AgentScriptConfig {
+            script_path: &script_path,
+            agent: AgentKind::Codex,
+            handoff_id: "123-codex-demo",
+            prompt_path: &prompt_path,
+            context_path: &context_path,
+            status_path: &status_path,
+            log_path: &log_path,
+            report: &report,
+        })
+        .expect("script should be written");
+
+        let script = fs::read_to_string(&script_path).expect("script is readable");
+        assert!(script.contains("call codex exec \"%STACKWISE_PROMPT%\""));
+        assert!(!script.contains("call codex -p"));
 
         let _ = fs::remove_dir_all(root);
     }

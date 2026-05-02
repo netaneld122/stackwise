@@ -8,6 +8,8 @@
 *.stackwise.tmp
 /.codex/
 /.stackwise-local/
+.codex/
+.stackwise-local/
 /*[Pp]rompt*.md
 /tasks/
 /skills/

@@ -842,8 +842,51 @@ function AgentActions({ symbol }: { symbol: SymbolReport }) {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [unavailableAgents, setUnavailableAgents] = useState<Set<AgentId>>(() => new Set());
+  const pollGenerationRef = useRef(0);
+
+  useEffect(() => {
+    pollGenerationRef.current += 1;
+    setBusyAgent(null);
+    setStatus(null);
+    setError(null);
+  }, [symbol.id]);
+
+  const followAgentStatus = async (
+    agent: AgentId,
+    payload: AgentHandoffResponse,
+    generation: number,
+  ) => {
+    const isCurrent = () => pollGenerationRef.current === generation;
+    try {
+      const launchStatus = await pollAgentStatus(payload.handoff_id, {
+        onRunning: (runningStatus) => {
+          if (!isCurrent()) return;
+          setError(null);
+          setStatus(runningAgentStatusDisplayMessage(payload, runningStatus));
+        },
+      });
+      if (!isCurrent()) return;
+
+      if (launchStatus?.state === "failed") {
+        if (isAgentUnavailableStatus(agent, launchStatus)) {
+          setUnavailableAgents((current) => new Set(current).add(agent));
+        }
+        setStatus(null);
+        setError(agentStatusDisplayMessage(launchStatus));
+      } else if (launchStatus?.state === "succeeded") {
+        setError(null);
+        setStatus(agentStatusDisplayMessage(launchStatus));
+      } else {
+        setStatus(`${payload.agent} is still running. Prompt: ${payload.prompt_path}. Log: ${payload.log_path}`);
+      }
+    } catch (cause) {
+      if (isCurrent()) setError(agentLaunchErrorMessage(cause));
+    }
+  };
 
   const launchAgent = async (agent: AgentId) => {
+    const generation = pollGenerationRef.current + 1;
+    pollGenerationRef.current = generation;
     setBusyAgent(agent);
     setStatus(`Launching ${agentLabel(agent)}...`);
     setError(null);
@@ -866,25 +909,12 @@ function AgentActions({ symbol }: { symbol: SymbolReport }) {
       const promptPath = payload?.prompt_path ? ` Prompt: ${payload.prompt_path}` : "";
       setStatus(`${payload?.message ?? `Started ${agentLabel(agent)}.`}${promptPath}`);
       if (payload?.handoff_id) {
-        const launchStatus = await pollAgentStatus(payload.handoff_id);
-        if (launchStatus?.state === "failed") {
-          if (isAgentUnavailableStatus(agent, launchStatus)) {
-            setUnavailableAgents((current) => new Set(current).add(agent));
-          }
-          setStatus(null);
-          setError(agentStatusDisplayMessage(launchStatus));
-        } else if (launchStatus?.state === "succeeded") {
-          setStatus(agentStatusDisplayMessage(launchStatus));
-        } else {
-          setStatus(
-            `${payload.agent} is still running. Prompt: ${payload.prompt_path}. Log: ${payload.log_path}`,
-          );
-        }
+        void followAgentStatus(agent, payload, generation);
       }
     } catch (cause) {
       setError(agentLaunchErrorMessage(cause));
     } finally {
-      setBusyAgent(null);
+      if (pollGenerationRef.current === generation) setBusyAgent(null);
     }
   };
 
@@ -922,9 +952,13 @@ function AgentActions({ symbol }: { symbol: SymbolReport }) {
   );
 }
 
-async function pollAgentStatus(handoffId: string): Promise<AgentHandoffStatus | null> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    await delay(attempt === 0 ? 500 : 750);
+async function pollAgentStatus(
+  handoffId: string,
+  options: { maxAttempts?: number; onRunning?: (status: AgentHandoffStatus) => void } = {},
+): Promise<AgentHandoffStatus | null> {
+  const maxAttempts = options.maxAttempts ?? 180;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    await delay(agentStatusPollDelay(attempt));
     const response = await fetch(`/api/agent-handoff-status?id=${encodeURIComponent(handoffId)}`);
     if (response.status === 404) continue;
     if (!response.ok) {
@@ -933,8 +967,21 @@ async function pollAgentStatus(handoffId: string): Promise<AgentHandoffStatus | 
     }
     const status = (await response.json()) as AgentHandoffStatus;
     if (status.state !== "running") return status;
+    options.onRunning?.(status);
   }
   return null;
+}
+
+function runningAgentStatusDisplayMessage(
+  payload: AgentHandoffResponse,
+  status: AgentHandoffStatus,
+): string {
+  return `${status.message}. Log: ${payload.log_path}`;
+}
+
+function agentStatusPollDelay(attempt: number): number {
+  if (attempt === 0) return 500;
+  return attempt < 20 ? 750 : 3000;
 }
 
 function delay(milliseconds: number): Promise<void> {
