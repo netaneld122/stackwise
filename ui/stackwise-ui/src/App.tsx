@@ -9,6 +9,7 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
+import { createPortal } from "react-dom";
 import * as dagre from "@dagrejs/dagre";
 import {
   Background,
@@ -22,7 +23,7 @@ import {
   type Node as FlowNode,
   type NodeProps,
 } from "@xyflow/react";
-import { GitBranch, Grid2X2, RotateCcw, Search, SquareArrowOutUpRight } from "lucide-react";
+import { GitBranch, Grid2X2, RotateCcw, Search } from "lucide-react";
 import {
   buildFocusedCallGraph,
   chooseDefaultRoot,
@@ -609,14 +610,6 @@ function Details({ symbol }: { symbol: SymbolReport | null }) {
             <span className="pill" key={item}>{item}</span>
           ))}
         </div>
-        <button
-          type="button"
-          disabled={!context?.source || loading}
-          title={context?.source ? `Open full source file: ${context.source.file}` : "No source file is available for this symbol."}
-          onClick={() => setPopout("file")}
-        >
-          <SquareArrowOutUpRight size={15} /> Open source
-        </button>
       </div>
       <CodePanel context={context} loading={loading} popout={popout} setPopout={setPopout} symbol={symbol} />
     </>
@@ -770,7 +763,7 @@ function CodeModal({
       ?.scrollIntoView({ block: "center" });
   }, [kind, fullFile]);
 
-  return (
+  const modal = (
     <div className={`codeModal${fullscreen ? " fullscreen" : ""}`} aria-hidden="false">
       <div className="codeModalBackdrop" onClick={onClose} />
       <div className="codeModalPanel" role="dialog" aria-modal="true" aria-labelledby="codeModalTitle">
@@ -812,6 +805,8 @@ function CodeModal({
       </div>
     </div>
   );
+
+  return createPortal(modal, document.body);
 }
 
 function SourceLines({ source, title }: { source: SourceSnippet; title: string }) {

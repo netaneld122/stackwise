@@ -175,8 +175,11 @@ test("renders the application shell", async ({ page }) => {
   await page.getByRole("menuitem", { name: "Show callers" }).click();
   await expect(page.locator(".symbolNode.root")).toContainText("leaf");
   await leafNode.click();
-  await expect(page.getByRole("button", { name: "Open source" })).toBeEnabled();
-  await page.getByRole("button", { name: "Open source" }).click();
+  await expect(page.getByRole("button", { name: "Open source" })).toHaveCount(0);
+  const sourceSnippet = page.locator('.codePanel .codeBlock[title="Open full source file focused on this function"]');
+  await expect(sourceSnippet).toBeVisible();
+  await sourceSnippet.click();
+  await expect(page.locator("body > .codeModal")).toBeVisible();
   await expect(page.locator("#codeModalTitle")).toHaveText("Full file");
   await expect(page.locator(".codeModal").getByText("fn leaf() -> usize {")).toBeVisible();
 });

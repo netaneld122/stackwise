@@ -1013,10 +1013,10 @@ body.resizing * {
 .codeModal {
   position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: 100;
   display: grid;
-  place-items: center;
-  padding: 28px;
+  place-items: start center;
+  padding: 18px 16px 16px;
 }
 
 .codeModalBackdrop {
@@ -1029,8 +1029,8 @@ body.resizing * {
 .codeModalPanel {
   position: relative;
   display: grid;
-  width: min(1180px, 96vw);
-  height: min(820px, 90vh);
+  width: min(1500px, calc(100vw - 32px));
+  height: min(960px, calc(100vh - 42px));
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.32);
@@ -1093,10 +1093,12 @@ body.resizing * {
   max-height: none;
   border: 0;
   border-radius: 0;
+  font-size: 13px;
+  line-height: 1.65;
 }
 
 .codeModalBody .codeLine {
-  grid-template-columns: 64px minmax(0, 1fr);
+  grid-template-columns: 74px minmax(0, 1fr);
 }
 
 .codeModalBody .asmLine {
