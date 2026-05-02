@@ -16,6 +16,7 @@ cargo stackwise --release --open
 ```
 
 This builds your current Cargo project, writes a JSON report under `target/stackwise/`, and opens an interactive treemap UI.
+Use `--serve` instead of `--open` when you want Stackwise to print a local URL without opening your browser.
 
 ## What You Get
 
@@ -29,7 +30,9 @@ This builds your current Cargo project, writes a JSON report under `target/stack
 
 - `stackwise analyze <artifact> --json report.json`
 - `cargo stackwise --release --open`
+- `cargo stackwise --release --serve`
 - `stackwise open report.json`
+- `stackwise open report.json --serve`
 - `stackwise check report.json --max-own-frame 4096`
 - `stackwise doctor`
 - `stackwise schema --json`

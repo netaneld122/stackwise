@@ -35,7 +35,7 @@ where
             print_summary(&report);
         }
         Some(Commands::Open(command)) => {
-            server::serve_report(command.report, true)?;
+            server::serve_report(command.report, !command.serve)?;
         }
         Some(Commands::Check(command)) => {
             let report = read_report(&command.report)?;
@@ -64,8 +64,8 @@ where
         None => {
             let config = StackwiseConfig::load_from_current_dir().unwrap_or_default();
             let report_path = run_cargo_analysis(CargoAnalysisRequest::from_cli(&cli, config)?)?;
-            if cli.open {
-                server::serve_report(report_path, true)?;
+            if cli.open || cli.serve {
+                server::serve_report(report_path, cli.open)?;
             }
         }
     }

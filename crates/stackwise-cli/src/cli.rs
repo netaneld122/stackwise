@@ -42,6 +42,9 @@ pub struct Cli {
     #[arg(long)]
     pub open: bool,
 
+    #[arg(long, conflicts_with = "open")]
+    pub serve: bool,
+
     #[arg(long)]
     pub json: Option<Utf8PathBuf>,
 
@@ -106,6 +109,9 @@ impl AnalyzeCommand {
 #[derive(Debug, Args)]
 pub struct OpenCommand {
     pub report: Utf8PathBuf,
+
+    #[arg(long)]
+    pub serve: bool,
 }
 
 #[derive(Debug, Args)]
@@ -133,4 +139,35 @@ pub enum ExactModeArg {
     Off,
     Auto,
     Required,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Commands};
+    use clap::Parser;
+
+    #[test]
+    fn cargo_style_serve_mode_parses_without_opening() {
+        let cli = Cli::try_parse_from(["stackwise", "--release", "--serve"]).unwrap();
+
+        assert!(cli.release);
+        assert!(cli.serve);
+        assert!(!cli.open);
+    }
+
+    #[test]
+    fn cargo_style_serve_conflicts_with_open() {
+        assert!(Cli::try_parse_from(["stackwise", "--open", "--serve"]).is_err());
+    }
+
+    #[test]
+    fn open_command_serve_mode_parses_without_opening() {
+        let cli = Cli::try_parse_from(["stackwise", "open", "report.json", "--serve"]).unwrap();
+        let Some(Commands::Open(command)) = cli.command else {
+            panic!("expected open command");
+        };
+
+        assert_eq!(command.report.as_str(), "report.json");
+        assert!(command.serve);
+    }
 }
