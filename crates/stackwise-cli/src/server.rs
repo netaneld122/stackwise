@@ -246,7 +246,7 @@ fn agent_handoff_status_response(
         }
     };
 
-    json_value_response(&enrich_agent_status(status))
+    json_value_response(&enrich_agent_status(refresh_agent_status_log_tail(status)))
 }
 
 fn agent_handoff_response(
@@ -384,7 +384,7 @@ fn agent_handoff_response(
         log_path: log_path.to_string_lossy().to_string(),
         command: request
             .agent
-            .command_preview(&agent_prompt_for_path(&prompt_path)),
+            .command_preview(&agent_prompt_for_path(&prompt_path), &prompt_path),
         message: format!(
             "Started {} with a Stackwise stack-optimization brief.",
             request.agent.label()
@@ -399,8 +399,12 @@ fn agent_prompt_for_path(prompt_path: &Path) -> String {
     )
 }
 
+fn opencode_prompt_message() -> &'static str {
+    "Read the attached Stackwise optimization brief and follow it."
+}
+
 #[cfg(not(windows))]
-fn agent_prompt_command(agent: AgentKind, prompt: &str) -> String {
+fn agent_prompt_command(agent: AgentKind, prompt: &str, prompt_path: &Path) -> String {
     match agent {
         AgentKind::Codex => format!(
             "{} exec {}",
@@ -408,9 +412,10 @@ fn agent_prompt_command(agent: AgentKind, prompt: &str) -> String {
             shell_quote(prompt)
         ),
         AgentKind::Opencode => format!(
-            "{} run {}",
+            "{} run {} --file {} --print-logs --log-level ERROR",
             shell_quote(agent.program()),
-            shell_quote(prompt)
+            shell_quote(opencode_prompt_message()),
+            shell_quote(&prompt_path.to_string_lossy())
         ),
         _ => format!(
             "{} -p {}",
@@ -421,11 +426,83 @@ fn agent_prompt_command(agent: AgentKind, prompt: &str) -> String {
 }
 
 #[cfg(windows)]
-fn windows_agent_prompt_command(agent: AgentKind) -> String {
+fn windows_agent_monitor_script(agent: AgentKind) -> String {
+    format!(
+        r#"$ErrorActionPreference = 'Continue'
+$script:StackwiseWriter = $null
+function Write-StackwiseLine([string]$line) {{
+  $script:StackwiseWriter.WriteLine($line)
+  $script:StackwiseWriter.Flush()
+  [Console]::WriteLine($line)
+}}
+try {{
+  if (Test-Path -LiteralPath $env:STACKWISE_LOG_FILE) {{
+    Remove-Item -LiteralPath $env:STACKWISE_LOG_FILE -Force -ErrorAction SilentlyContinue
+  }}
+  $script:StackwiseWriter = [System.IO.StreamWriter]::new($env:STACKWISE_LOG_FILE, $false, [System.Text.UTF8Encoding]::new($false))
+  $psi = [System.Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = if ($env:ComSpec) {{ $env:ComSpec }} else {{ 'cmd.exe' }}
+  $psi.Arguments = '/D /C "' + $env:STACKWISE_RUNNER_FILE + '"'
+  $psi.UseShellExecute = $false
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $false
+  $process = [System.Diagnostics.Process]::new()
+  $process.StartInfo = $psi
+  [void]$process.Start()
+  $fatalPattern = {}
+  $fatal = $false
+  while ($true) {{
+    $line = $process.StandardOutput.ReadLine()
+    if ($null -eq $line) {{ break }}
+    Write-StackwiseLine $line
+    if ($fatalPattern -and $line -match $fatalPattern) {{
+      $fatal = $true
+      try {{ Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }} catch {{ }}
+      $message = 'OpenCode provider failure detected; stopped the stuck OpenCode process.'
+      Write-StackwiseLine $message
+      break
+    }}
+  }}
+  if ($fatal) {{
+    exit 1
+  }}
+  $process.WaitForExit()
+  exit $process.ExitCode
+}} catch {{
+  if ($null -ne $script:StackwiseWriter) {{
+    Write-StackwiseLine $_.Exception.Message
+  }} else {{
+    [System.IO.File]::WriteAllText($env:STACKWISE_LOG_FILE, $_.Exception.Message, [System.Text.UTF8Encoding]::new($false))
+  }}
+  exit 1
+}} finally {{
+  if ($null -ne $script:StackwiseWriter) {{
+    $script:StackwiseWriter.Dispose()
+  }}
+}}
+"#,
+        windows_agent_fatal_pattern_expression(agent)
+    )
+}
+
+#[cfg(windows)]
+fn windows_agent_runner_script(agent: AgentKind) -> String {
+    let command = match agent {
+        AgentKind::Codex => "call codex exec \"%STACKWISE_PROMPT%\"".to_owned(),
+        AgentKind::Opencode => format!(
+            "call opencode run \"{}\" --file \"%STACKWISE_PROMPT_FILE%\" --print-logs --log-level ERROR",
+            opencode_prompt_message()
+        ),
+        _ => format!("call {} -p \"%STACKWISE_PROMPT%\"", agent.program()),
+    };
+    format!("@echo off\r\n{command} 2>&1\r\nexit /b %ERRORLEVEL%\r\n")
+}
+
+#[cfg(windows)]
+fn windows_agent_fatal_pattern_expression(agent: AgentKind) -> &'static str {
     match agent {
-        AgentKind::Codex => "codex exec \"%STACKWISE_PROMPT%\"".to_owned(),
-        AgentKind::Opencode => "opencode run \"%STACKWISE_PROMPT%\"".to_owned(),
-        _ => format!("{} -p \"%STACKWISE_PROMPT%\"", agent.program()),
+        AgentKind::Opencode => "'(?i)(AI_APICallError|ConnectionRefused|connection refused)'",
+        _ => "$null",
     }
 }
 
@@ -443,10 +520,15 @@ fn windows_agent_status_command(initial_state: AgentHandoffState) -> String {
 }
 
 impl AgentKind {
-    fn command_preview(self, prompt: &str) -> String {
+    fn command_preview(self, prompt: &str, prompt_path: &Path) -> String {
         match self {
             AgentKind::Codex => format!("{} exec \"{}\"", self.program(), prompt),
-            AgentKind::Opencode => format!("{} run \"{}\"", self.program(), prompt),
+            AgentKind::Opencode => format!(
+                "{} run \"{}\" --file \"{}\" --print-logs --log-level ERROR",
+                self.program(),
+                opencode_prompt_message(),
+                prompt_path.display()
+            ),
             _ => format!("{} -p \"{}\"", self.program(), prompt),
         }
     }
@@ -765,13 +847,137 @@ fn read_agent_status(path: &Path) -> std::io::Result<AgentHandoffStatus> {
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
 }
 
+fn refresh_agent_status_log_tail(mut status: AgentHandoffStatus) -> AgentHandoffStatus {
+    if matches!(
+        status.state,
+        AgentHandoffState::Running | AgentHandoffState::Failed
+    ) || status.log_tail.is_none()
+    {
+        if let Ok(log) = read_agent_log_window(Path::new(&status.log_path), 1_000_000) {
+            let tail = compact_agent_log_tail(&strip_ansi(&log), 4000);
+            if !tail.trim().is_empty() {
+                status.log_tail = Some(tail);
+            }
+        }
+    }
+    status
+}
+
+fn read_agent_log_window(path: &Path, max_bytes: usize) -> std::io::Result<String> {
+    let data = fs::read(path)?;
+    if data.len() <= max_bytes {
+        return Ok(String::from_utf8_lossy(&data).into_owned());
+    }
+
+    let head_bytes = max_bytes / 2;
+    let tail_bytes = max_bytes.saturating_sub(head_bytes);
+    Ok(format!(
+        "{}\n...\n{}",
+        String::from_utf8_lossy(&data[..head_bytes]),
+        String::from_utf8_lossy(&data[data.len().saturating_sub(tail_bytes)..])
+    ))
+}
+
+fn compact_agent_log_tail(log: &str, fallback_bytes: usize) -> String {
+    let relevant_patterns = [
+        "AI_APICallError",
+        "ConnectionRefused",
+        "connection refused",
+        "127.0.0.1:1234",
+        "lmstudio",
+        "does not have access to Claude",
+        "Please login again",
+        "contact your administrator",
+        "not recognized as an internal or external command",
+        "command not found",
+        "File not found",
+        "stream error",
+    ];
+    let mut relevant_lines = Vec::new();
+    for line in log.lines() {
+        let lower = line.to_lowercase();
+        if relevant_patterns
+            .iter()
+            .any(|pattern| lower.contains(&pattern.to_lowercase()))
+        {
+            relevant_lines.push(truncate_around_patterns(line, &relevant_patterns, 1800));
+            if relevant_lines.len() >= 6 {
+                break;
+            }
+        }
+    }
+
+    if !relevant_lines.is_empty() {
+        return relevant_lines.join("\n");
+    }
+
+    let start = char_boundary_at_or_before(log, log.len().saturating_sub(fallback_bytes));
+    log[start..].to_owned()
+}
+
+fn truncate_around_patterns(line: &str, patterns: &[&str], max_chars: usize) -> String {
+    let lower = line.to_lowercase();
+    let match_index = patterns
+        .iter()
+        .filter_map(|pattern| lower.find(&pattern.to_lowercase()))
+        .min()
+        .unwrap_or(0);
+    let start = char_boundary_at_or_before(line, match_index.saturating_sub(max_chars / 4));
+    let end = char_boundary_at_or_after(line, (match_index + max_chars).min(line.len()));
+    let mut output = String::new();
+    if start > 0 {
+        output.push_str("...");
+    }
+    output.push_str(&line[start..end]);
+    if end < line.len() {
+        output.push_str("...");
+    }
+    output
+}
+
+fn char_boundary_at_or_before(value: &str, mut index: usize) -> usize {
+    while index > 0 && !value.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn char_boundary_at_or_after(value: &str, mut index: usize) -> usize {
+    while index < value.len() && !value.is_char_boundary(index) {
+        index += 1;
+    }
+    index
+}
+
+fn strip_ansi(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            let _ = chars.next();
+            for next in chars.by_ref() {
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            output.push(ch);
+        }
+    }
+    output
+}
+
 fn enrich_agent_status(mut status: AgentHandoffStatus) -> AgentHandoffStatus {
-    if status.state == AgentHandoffState::Failed {
+    if matches!(
+        status.state,
+        AgentHandoffState::Failed | AgentHandoffState::Running
+    ) {
         if let Some(message) = friendly_agent_failure_message(
             status.agent_kind(),
             status.log_tail.as_deref().unwrap_or_default(),
             status.exit_code,
         ) {
+            status.state = AgentHandoffState::Failed;
             status.message = message;
         }
     }
@@ -791,6 +997,21 @@ fn friendly_agent_failure_message(
     {
         return Some(
             "Claude is unavailable for this account. Try Codex, Cursor, or OpenCode, or log into Claude with an organization that has access.".to_owned(),
+        );
+    }
+    if agent == Some(AgentKind::Opencode)
+        && (normalized.contains("connectionrefused")
+            || normalized.contains("connection refused")
+            || normalized.contains("ai_apicallerror")
+            || normalized.contains("opencode provider failure detected"))
+    {
+        if normalized.contains("127.0.0.1:1234") || normalized.contains("lmstudio") {
+            return Some(
+                "OpenCode's configured LM Studio provider is unavailable at 127.0.0.1:1234. Start the LM Studio local server, choose another OpenCode provider/model, or try Codex/Claude.".to_owned(),
+            );
+        }
+        return Some(
+            "OpenCode's configured provider is unavailable. Check the OpenCode model/provider configuration or try another AI button.".to_owned(),
         );
     }
 
@@ -907,8 +1128,16 @@ fn write_agent_script(config: AgentScriptConfig<'_>) -> anyhow::Result<()> {
     {
         let running_status = windows_agent_status_command(AgentHandoffState::Running);
         let final_status = windows_agent_status_command(AgentHandoffState::Failed);
+        let monitor_path = script_path.with_extension("ps1");
+        let runner_path = script_path.with_extension("agent.cmd");
+        fs::write(&monitor_path, windows_agent_monitor_script(agent))?;
+        fs::write(&runner_path, windows_agent_runner_script(agent))?;
+        let launch_line = format!(
+            "call powershell -NoProfile -ExecutionPolicy Bypass -File \"{}\"",
+            escape_batch_quoted(&monitor_path.to_string_lossy())
+        );
         let script = format!(
-            "@echo off\r\nsetlocal EnableExtensions\r\ncd /d \"{}\"\r\nset \"STACKWISE_HANDOFF_ID={}\"\r\nset \"STACKWISE_AGENT={}\"\r\nset \"STACKWISE_PROMPT={}\"\r\nset \"STACKWISE_PROMPT_FILE={}\"\r\nset \"STACKWISE_CONTEXT_FILE={}\"\r\nset \"STACKWISE_SCRIPT_FILE={}\"\r\nset \"STACKWISE_STATUS_FILE={}\"\r\nset \"STACKWISE_LOG_FILE={}\"\r\necho Stackwise launching {} for stack optimization...\r\necho Prompt: \"%STACKWISE_PROMPT_FILE%\"\r\n{}\r\ncall {} > \"%STACKWISE_LOG_FILE%\" 2>&1\r\nset \"STACKWISE_EXIT_CODE=%ERRORLEVEL%\"\r\ntype \"%STACKWISE_LOG_FILE%\"\r\n{}\r\nif not \"%STACKWISE_EXIT_CODE%\"==\"0\" (\r\n  if /I \"%STACKWISE_AGENT%\"==\"Claude\" (\r\n    findstr /I /C:\"does not have access to Claude\" /C:\"Please login again\" /C:\"contact your administrator\" \"%STACKWISE_LOG_FILE%\" >nul && echo Claude is unavailable for this account. Try Codex, Cursor, or OpenCode, or log into Claude with an organization that has access.\r\n  )\r\n)\r\necho.\r\necho Agent exited with %STACKWISE_EXIT_CODE%.\r\n",
+            "@echo off\r\nsetlocal EnableExtensions\r\ncd /d \"{}\"\r\nset \"STACKWISE_HANDOFF_ID={}\"\r\nset \"STACKWISE_AGENT={}\"\r\nset \"STACKWISE_PROMPT={}\"\r\nset \"STACKWISE_PROMPT_FILE={}\"\r\nset \"STACKWISE_CONTEXT_FILE={}\"\r\nset \"STACKWISE_SCRIPT_FILE={}\"\r\nset \"STACKWISE_RUNNER_FILE={}\"\r\nset \"STACKWISE_STATUS_FILE={}\"\r\nset \"STACKWISE_LOG_FILE={}\"\r\necho Stackwise launching {} for stack optimization...\r\necho Prompt: \"%STACKWISE_PROMPT_FILE%\"\r\necho Output is streamed live and saved to \"%STACKWISE_LOG_FILE%\".\r\n{}\r\n{}\r\nset \"STACKWISE_EXIT_CODE=%ERRORLEVEL%\"\r\n{}\r\nif not \"%STACKWISE_EXIT_CODE%\"==\"0\" (\r\n  if /I \"%STACKWISE_AGENT%\"==\"Claude\" (\r\n    findstr /I /C:\"does not have access to Claude\" /C:\"Please login again\" /C:\"contact your administrator\" \"%STACKWISE_LOG_FILE%\" >nul && echo Claude is unavailable for this account. Try Codex, Cursor, or OpenCode, or log into Claude with an organization that has access.\r\n  )\r\n)\r\necho.\r\necho Agent exited with %STACKWISE_EXIT_CODE%.\r\n",
             escape_batch_quoted(&cwd.to_string_lossy()),
             escape_batch_env(handoff_id),
             agent.label(),
@@ -916,11 +1145,12 @@ fn write_agent_script(config: AgentScriptConfig<'_>) -> anyhow::Result<()> {
             escape_batch_env(&prompt_path.to_string_lossy()),
             escape_batch_env(&context_path.to_string_lossy()),
             escape_batch_env(&script_path.to_string_lossy()),
+            escape_batch_env(&runner_path.to_string_lossy()),
             escape_batch_env(&status_path.to_string_lossy()),
             escape_batch_env(&log_path.to_string_lossy()),
             agent.label(),
             running_status,
-            windows_agent_prompt_command(agent),
+            launch_line,
             final_status
         );
         fs::write(script_path, script)?;
@@ -928,7 +1158,7 @@ fn write_agent_script(config: AgentScriptConfig<'_>) -> anyhow::Result<()> {
     #[cfg(not(windows))]
     {
         let script = format!(
-            "#!/usr/bin/env sh\ncd {}\nSTACKWISE_HANDOFF_ID={}\nSTACKWISE_AGENT={}\nSTACKWISE_PROMPT_FILE={}\nSTACKWISE_CONTEXT_FILE={}\nSTACKWISE_SCRIPT_FILE={}\nSTACKWISE_STATUS_FILE={}\nSTACKWISE_LOG_FILE={}\nexport STACKWISE_HANDOFF_ID STACKWISE_AGENT STACKWISE_PROMPT_FILE STACKWISE_CONTEXT_FILE STACKWISE_SCRIPT_FILE STACKWISE_STATUS_FILE STACKWISE_LOG_FILE\nprintf '%s\\n' {}\nprintf '{{\"id\":\"%s\",\"agent\":\"%s\",\"state\":\"running\",\"exit_code\":null,\"message\":\"%s is running.\",\"log_tail\":null,\"prompt_path\":\"%s\",\"context_path\":\"%s\",\"script_path\":\"%s\",\"log_path\":\"%s\",\"updated_at\":0}}\\n' \"$STACKWISE_HANDOFF_ID\" \"$STACKWISE_AGENT\" \"$STACKWISE_AGENT\" \"$STACKWISE_PROMPT_FILE\" \"$STACKWISE_CONTEXT_FILE\" \"$STACKWISE_SCRIPT_FILE\" \"$STACKWISE_LOG_FILE\" > \"$STACKWISE_STATUS_FILE\"\n{} > \"$STACKWISE_LOG_FILE\" 2>&1\nSTACKWISE_EXIT_CODE=$?\ncat \"$STACKWISE_LOG_FILE\"\nif [ \"$STACKWISE_EXIT_CODE\" -eq 0 ]; then STACKWISE_STATE=succeeded; STACKWISE_MESSAGE=\"$STACKWISE_AGENT finished successfully.\"; else STACKWISE_STATE=failed; STACKWISE_MESSAGE=\"$STACKWISE_AGENT exited with code $STACKWISE_EXIT_CODE. See the handoff log.\"; fi\nSTACKWISE_LOG_TAIL=$(tail -c 4000 \"$STACKWISE_LOG_FILE\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g')\nprintf '{{\"id\":\"%s\",\"agent\":\"%s\",\"state\":\"%s\",\"exit_code\":%s,\"message\":\"%s\",\"log_tail\":\"%s\",\"prompt_path\":\"%s\",\"context_path\":\"%s\",\"script_path\":\"%s\",\"log_path\":\"%s\",\"updated_at\":0}}\\n' \"$STACKWISE_HANDOFF_ID\" \"$STACKWISE_AGENT\" \"$STACKWISE_STATE\" \"$STACKWISE_EXIT_CODE\" \"$STACKWISE_MESSAGE\" \"$STACKWISE_LOG_TAIL\" \"$STACKWISE_PROMPT_FILE\" \"$STACKWISE_CONTEXT_FILE\" \"$STACKWISE_SCRIPT_FILE\" \"$STACKWISE_LOG_FILE\" > \"$STACKWISE_STATUS_FILE\"\nprintf '\\nAgent exited with %s.\\n' \"$STACKWISE_EXIT_CODE\"\n",
+            "#!/usr/bin/env sh\ncd {}\nSTACKWISE_HANDOFF_ID={}\nSTACKWISE_AGENT={}\nSTACKWISE_PROMPT_FILE={}\nSTACKWISE_CONTEXT_FILE={}\nSTACKWISE_SCRIPT_FILE={}\nSTACKWISE_STATUS_FILE={}\nSTACKWISE_LOG_FILE={}\nexport STACKWISE_HANDOFF_ID STACKWISE_AGENT STACKWISE_PROMPT_FILE STACKWISE_CONTEXT_FILE STACKWISE_SCRIPT_FILE STACKWISE_STATUS_FILE STACKWISE_LOG_FILE\nprintf '%s\\n' {}\nprintf 'Output is streamed live and saved to %s.\\n' \"$STACKWISE_LOG_FILE\"\nprintf '{{\"id\":\"%s\",\"agent\":\"%s\",\"state\":\"running\",\"exit_code\":null,\"message\":\"%s is running.\",\"log_tail\":null,\"prompt_path\":\"%s\",\"context_path\":\"%s\",\"script_path\":\"%s\",\"log_path\":\"%s\",\"updated_at\":0}}\\n' \"$STACKWISE_HANDOFF_ID\" \"$STACKWISE_AGENT\" \"$STACKWISE_AGENT\" \"$STACKWISE_PROMPT_FILE\" \"$STACKWISE_CONTEXT_FILE\" \"$STACKWISE_SCRIPT_FILE\" \"$STACKWISE_LOG_FILE\" > \"$STACKWISE_STATUS_FILE\"\nSTACKWISE_EXIT_FILE=\"$STACKWISE_LOG_FILE.exit\"\nrm -f \"$STACKWISE_LOG_FILE\" \"$STACKWISE_EXIT_FILE\"\n( {} ; printf '%s' \"$?\" > \"$STACKWISE_EXIT_FILE\" ) 2>&1 | tee \"$STACKWISE_LOG_FILE\"\nSTACKWISE_EXIT_CODE=$(cat \"$STACKWISE_EXIT_FILE\" 2>/dev/null || printf '1')\nrm -f \"$STACKWISE_EXIT_FILE\"\nif [ \"$STACKWISE_EXIT_CODE\" -eq 0 ]; then STACKWISE_STATE=succeeded; STACKWISE_MESSAGE=\"$STACKWISE_AGENT finished successfully.\"; else STACKWISE_STATE=failed; STACKWISE_MESSAGE=\"$STACKWISE_AGENT exited with code $STACKWISE_EXIT_CODE. See the handoff log.\"; fi\nSTACKWISE_LOG_TAIL=$(tail -c 4000 \"$STACKWISE_LOG_FILE\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g')\nprintf '{{\"id\":\"%s\",\"agent\":\"%s\",\"state\":\"%s\",\"exit_code\":%s,\"message\":\"%s\",\"log_tail\":\"%s\",\"prompt_path\":\"%s\",\"context_path\":\"%s\",\"script_path\":\"%s\",\"log_path\":\"%s\",\"updated_at\":0}}\\n' \"$STACKWISE_HANDOFF_ID\" \"$STACKWISE_AGENT\" \"$STACKWISE_STATE\" \"$STACKWISE_EXIT_CODE\" \"$STACKWISE_MESSAGE\" \"$STACKWISE_LOG_TAIL\" \"$STACKWISE_PROMPT_FILE\" \"$STACKWISE_CONTEXT_FILE\" \"$STACKWISE_SCRIPT_FILE\" \"$STACKWISE_LOG_FILE\" > \"$STACKWISE_STATUS_FILE\"\nprintf '\\nAgent exited with %s.\\n' \"$STACKWISE_EXIT_CODE\"\nif [ -t 0 ]; then printf 'Press Enter to close this Stackwise agent shell...'; read _; fi\n",
             shell_quote(&cwd.to_string_lossy()),
             shell_quote(handoff_id),
             shell_quote(agent.label()),
@@ -941,7 +1171,7 @@ fn write_agent_script(config: AgentScriptConfig<'_>) -> anyhow::Result<()> {
                 "Stackwise launching {} for stack optimization...",
                 agent.label()
             )),
-            agent_prompt_command(agent, &prompt)
+            agent_prompt_command(agent, &prompt, prompt_path)
         );
         fs::write(script_path, script)?;
         make_executable(script_path)?;
@@ -1035,7 +1265,7 @@ fn windows_agent_shell_args(script_path: &Path) -> [OsString; 6] {
         OsString::from("start"),
         OsString::from(""),
         OsString::from("cmd"),
-        OsString::from("/C"),
+        OsString::from("/K"),
         script_path.as_os_str().to_os_string(),
     ]
 }
@@ -1579,13 +1809,14 @@ mod tests {
     #[cfg(windows)]
     use super::windows_agent_shell_args;
     use super::{
-        agent_handoff_status_path, enrich_agent_status, friendly_agent_failure_message,
+        agent_handoff_status_path, compact_agent_log_tail, enrich_agent_status,
+        friendly_agent_failure_message, opencode_prompt_message, refresh_agent_status_log_tail,
         resolve_rust_std_source_path_with_roots, rust_library_relative_path,
         sanitize_file_component, ui_asset_path, write_agent_script, AgentHandoffPaths,
         AgentHandoffRequest, AgentHandoffState, AgentHandoffStatus, AgentKind, AgentScriptConfig,
     };
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     #[cfg(windows)]
     use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1665,7 +1896,9 @@ mod tests {
 
         assert_eq!(request.agent.slug(), "codex");
         assert_eq!(
-            request.agent.command_preview("Read the Stackwise brief."),
+            request
+                .agent
+                .command_preview("Read the Stackwise brief.", Path::new("brief.prompt.md")),
             "codex exec \"Read the Stackwise brief.\""
         );
         assert_eq!(request.symbol_id, 42);
@@ -1677,8 +1910,10 @@ mod tests {
         assert_eq!(request.agent.slug(), "opencode");
         assert_eq!(request.agent.program(), "opencode");
         assert_eq!(
-            request.agent.command_preview("Read the Stackwise brief."),
-            "opencode run \"Read the Stackwise brief.\""
+            request
+                .agent
+                .command_preview("Read the Stackwise brief.", Path::new("brief.prompt.md")),
+            "opencode run \"Read the attached Stackwise optimization brief and follow it.\" --file \"brief.prompt.md\" --print-logs --log-level ERROR"
         );
         assert_eq!(request.symbol_id, 7);
     }
@@ -1724,6 +1959,85 @@ mod tests {
     }
 
     #[test]
+    fn enriches_running_opencode_provider_failures_from_log_tail() {
+        let prompt_path = PathBuf::from("prompt.md");
+        let context_path = PathBuf::from("context.json");
+        let script_path = PathBuf::from("launch.cmd");
+        let log_path = PathBuf::from("launch.log");
+        let mut status = AgentHandoffStatus::running(
+            "123-opencode-demo",
+            AgentKind::Opencode,
+            &prompt_path,
+            &context_path,
+            &script_path,
+            &log_path,
+        );
+        status.log_tail = Some(
+            "AI_APICallError ConnectionRefused http://127.0.0.1:1234/v1/chat/completions"
+                .to_owned(),
+        );
+
+        let status = enrich_agent_status(status);
+
+        assert_eq!(status.state, AgentHandoffState::Failed);
+        assert!(status.message.contains("LM Studio"));
+        assert!(status.message.contains("127.0.0.1:1234"));
+    }
+
+    #[test]
+    fn compact_agent_log_tail_prefers_provider_errors_over_huge_tail() {
+        let log = format!(
+            "header\n\u{1b}[31mERROR providerID=lmstudio error={{\"name\":\"AI_APICallError\",\"cause\":{{\"code\":\"ConnectionRefused\",\"path\":\"http://127.0.0.1:1234/v1/chat/completions\"}}}}\u{1b}[0m\n{}",
+            "system prompt noise ".repeat(9000)
+        );
+
+        let tail = compact_agent_log_tail(&log, 4000);
+
+        assert!(tail.contains("AI_APICallError"));
+        assert!(tail.contains("ConnectionRefused"));
+        assert!(tail.contains("127.0.0.1:1234"));
+        assert!(!tail.contains("system prompt noise system prompt noise system prompt noise"));
+    }
+
+    #[test]
+    fn refresh_running_agent_status_uses_relevant_log_excerpt() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(&root).expect("temp dir can be created");
+        let prompt_path = root.join("prompt.md");
+        let context_path = root.join("context.json");
+        let script_path = root.join("launch.cmd");
+        let log_path = root.join("launch.log");
+        fs::write(
+            &log_path,
+            format!(
+                "ERROR service=llm providerID=lmstudio error={{\"name\":\"AI_APICallError\",\"cause\":{{\"code\":\"ConnectionRefused\",\"path\":\"http://127.0.0.1:1234/v1/chat/completions\"}}}}\n{}",
+                "request body ".repeat(9000)
+            ),
+        )
+        .expect("log can be written");
+        let status = AgentHandoffStatus::running(
+            "123-opencode-demo",
+            AgentKind::Opencode,
+            &prompt_path,
+            &context_path,
+            &script_path,
+            &log_path,
+        );
+
+        let status = enrich_agent_status(refresh_agent_status_log_tail(status));
+
+        assert_eq!(status.state, AgentHandoffState::Failed);
+        assert!(status.message.contains("LM Studio"));
+        assert!(status
+            .log_tail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("AI_APICallError"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn validates_handoff_status_paths() {
         let report_path = camino::Utf8PathBuf::from("target/report.json");
 
@@ -1759,6 +2073,7 @@ mod tests {
         let script = fs::read_to_string(&script_path).expect("script is readable");
         assert!(script.contains("STACKWISE_STATUS_FILE"));
         assert!(script.contains("STACKWISE_LOG_FILE"));
+        assert!(script.contains("STACKWISE_RUNNER_FILE"));
         assert!(script.contains("powershell -NoProfile"));
         assert!(script.contains("does not have access to Claude"));
 
@@ -1790,8 +2105,59 @@ mod tests {
         .expect("script should be written");
 
         let script = fs::read_to_string(&script_path).expect("script is readable");
-        assert!(script.contains("call codex exec \"%STACKWISE_PROMPT%\""));
-        assert!(!script.contains("call codex -p"));
+        assert!(script.contains("call powershell -NoProfile -ExecutionPolicy Bypass -File"));
+
+        let monitor_script = fs::read_to_string(script_path.with_extension("ps1"))
+            .expect("monitor script is readable");
+        assert!(monitor_script.contains("Write-StackwiseLine"));
+        assert!(monitor_script.contains("STACKWISE_RUNNER_FILE"));
+
+        let runner_script = fs::read_to_string(script_path.with_extension("agent.cmd"))
+            .expect("runner script is readable");
+        assert!(runner_script.contains("call codex exec \"%STACKWISE_PROMPT%\""));
+        assert!(!runner_script.contains("call codex -p"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_opencode_script_attaches_prompt_file() {
+        let root = unique_temp_dir();
+        let script_path = root.join("launch.cmd");
+        let prompt_path = root.join("brief.prompt.md");
+        let context_path = root.join("brief.context.json");
+        let status_path = root.join("brief.status.json");
+        let log_path = root.join("brief.log");
+
+        fs::create_dir_all(&root).expect("temp root is created");
+        let report = minimal_report(root.to_string_lossy().as_ref());
+        write_agent_script(AgentScriptConfig {
+            script_path: &script_path,
+            agent: AgentKind::Opencode,
+            handoff_id: "123-opencode-demo",
+            prompt_path: &prompt_path,
+            context_path: &context_path,
+            status_path: &status_path,
+            log_path: &log_path,
+            report: &report,
+        })
+        .expect("script should be written");
+
+        let script = fs::read_to_string(&script_path).expect("script is readable");
+        assert!(script.contains("call powershell -NoProfile -ExecutionPolicy Bypass -File"));
+
+        let monitor_script = fs::read_to_string(script_path.with_extension("ps1"))
+            .expect("monitor script is readable");
+        assert!(monitor_script.contains("ProcessStartInfo"));
+        assert!(monitor_script.contains("AI_APICallError|ConnectionRefused"));
+        assert!(monitor_script.contains("stopped the stuck OpenCode process"));
+
+        let runner_script = fs::read_to_string(script_path.with_extension("agent.cmd"))
+            .expect("runner script is readable");
+        assert!(runner_script.contains("call opencode run"));
+        assert!(runner_script.contains("--file \"%STACKWISE_PROMPT_FILE%\""));
+        assert!(runner_script.contains(opencode_prompt_message()));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -1865,7 +2231,7 @@ mod tests {
         assert_eq!(args[1], "start");
         assert_eq!(args[2], "");
         assert_eq!(args[3], "cmd");
-        assert_eq!(args[4], "/C");
+        assert_eq!(args[4], "/K");
         assert_eq!(args[5], script.as_os_str());
     }
 

@@ -35,11 +35,11 @@ export function agentLaunchErrorMessage(cause: unknown): string {
 }
 
 export function agentStatusDisplayMessage(status: AgentHandoffStatus): string {
+  const tail = readableLogTail(status.log_tail);
   if (status.state === "running") {
-    return status.message;
+    return tail ? `${status.message}\n\nLog tail:\n${tail}` : status.message;
   }
 
-  const tail = readableLogTail(status.log_tail);
   return tail ? `${status.message}\n\nLog tail:\n${tail}` : status.message;
 }
 

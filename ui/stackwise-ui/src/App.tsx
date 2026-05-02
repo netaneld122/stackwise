@@ -976,7 +976,7 @@ function runningAgentStatusDisplayMessage(
   payload: AgentHandoffResponse,
   status: AgentHandoffStatus,
 ): string {
-  return `${status.message}. Log: ${payload.log_path}`;
+  return `${agentStatusDisplayMessage(status)}\n\nLog: ${payload.log_path}`;
 }
 
 function agentStatusPollDelay(attempt: number): number {
@@ -1723,7 +1723,7 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
       <div className="nodeMetrics">
         <span><b>Own</b>{formatBytes(symbol.own_frame.bytes)}</span>
         <span><b>Cumulative</b>{formatBytes(node.cumulativeStackBytes)}</span>
-        <span><b>Worst</b>{formatBytes(symbol.worst_path.bytes)}</span>
+        <span><b>Worst branch</b>{formatBytes(node.visibleWorstStackBytes)}</span>
       </div>
     </div>
   );

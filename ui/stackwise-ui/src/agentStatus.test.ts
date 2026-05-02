@@ -30,6 +30,16 @@ describe("agent status helpers", () => {
     expect(agentStatusDisplayMessage(status)).toContain("Log tail:");
     expect(agentStatusDisplayMessage(status)).toContain("third");
   });
+
+  it("shows live log tail for running handoffs", () => {
+    const status = failedStatus("OpenCode is running.", "booting\nconnecting");
+    status.state = "running";
+    status.exit_code = null;
+
+    expect(agentStatusDisplayMessage(status)).toContain("OpenCode is running.");
+    expect(agentStatusDisplayMessage(status)).toContain("Log tail:");
+    expect(agentStatusDisplayMessage(status)).toContain("connecting");
+  });
 });
 
 function failedStatus(message: string, logTail: string): AgentHandoffStatus {

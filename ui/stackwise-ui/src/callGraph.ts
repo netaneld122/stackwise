@@ -25,6 +25,8 @@ export interface GraphSymbolNode {
   depth: number;
   cumulativeStackBytes: number | null;
   cumulativeStackStatus: GraphStackStatus;
+  visibleWorstStackBytes: number | null;
+  visibleWorstStackStatus: GraphStackStatus;
 }
 
 export interface GraphBoundaryNode {
@@ -167,6 +169,8 @@ export function buildFocusedCallGraph(
       depth: depthById.get(id) ?? 0,
       cumulativeStackBytes: stack.bytes,
       cumulativeStackStatus: stack.status,
+      visibleWorstStackBytes: 0,
+      visibleWorstStackStatus: "known",
     };
   });
 
@@ -183,10 +187,20 @@ export function buildFocusedCallGraph(
     }
   }
 
+  const edges = [...graphEdges.values()].map((edge) => withStackDelta(edge, index, stackById));
+  const visibleWorstById = computeVisibleWorstStacks(nodeIds, index, edges);
+  for (const node of nodes) {
+    if ("symbol" in node) {
+      const worst = visibleWorstById.get(node.symbol.id);
+      node.visibleWorstStackBytes = worst?.bytes ?? 0;
+      node.visibleWorstStackStatus = worst?.status ?? "known";
+    }
+  }
+
   return {
     rootId,
     nodes,
-    edges: [...graphEdges.values()].map((edge) => withStackDelta(edge, index, stackById)),
+    edges,
     hiddenNodeCount,
   };
 }
@@ -348,6 +362,48 @@ function updateStack(
   if (current?.bytes == null && next.bytes == null) return false;
   stacks.set(id, next);
   return true;
+}
+
+function computeVisibleWorstStacks(
+  nodeIds: ReadonlySet<number>,
+  index: GraphIndex,
+  edges: GraphEdge[],
+) {
+  const outgoing = new Map<number, Array<{ callee: number; kind: EdgeKind }>>();
+  for (const edge of edges) {
+    const caller = symbolIdFromNodeId(edge.source);
+    const callee = symbolIdFromNodeId(edge.target);
+    if (caller == null || callee == null || !nodeIds.has(caller) || !nodeIds.has(callee)) continue;
+    outgoing.set(caller, [...(outgoing.get(caller) ?? []), { callee, kind: edge.kind }]);
+  }
+
+  const memo = new Map<number, { bytes: number | null; status: GraphStackStatus }>();
+  const visiting = new Set<number>();
+  const visit = (id: number): { bytes: number | null; status: GraphStackStatus } => {
+    const memoized = memo.get(id);
+    if (memoized) return memoized;
+
+    const symbol = index.byId.get(id);
+    if (!symbol) return { bytes: 0, status: "known" };
+    const own = ownStack(symbol).bytes ?? 0;
+    if (visiting.has(id)) return { bytes: own, status: "known" };
+
+    visiting.add(id);
+    let best = own;
+    for (const edge of outgoing.get(id) ?? []) {
+      const calleeWorst = visit(edge.callee).bytes ?? 0;
+      const candidate = edge.kind === "tail_call" ? Math.max(own, calleeWorst) : own + calleeWorst;
+      best = Math.max(best, candidate);
+    }
+    visiting.delete(id);
+
+    const result = { bytes: best, status: "known" as GraphStackStatus };
+    memo.set(id, result);
+    return result;
+  };
+
+  for (const id of nodeIds) visit(id);
+  return memo;
 }
 
 function withStackDelta(
