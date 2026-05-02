@@ -867,7 +867,7 @@ function AgentActions({ symbol }: { symbol: SymbolReport }) {
       const promptPath = payload?.prompt_path ? ` Prompt: ${payload.prompt_path}` : "";
       setStatus(`${payload?.message ?? `Started ${agent}.`}${promptPath}`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(agentLaunchErrorMessage(cause));
     } finally {
       setBusyAgent(null);
     }
@@ -898,6 +898,14 @@ function AgentActions({ symbol }: { symbol: SymbolReport }) {
       {error ? <p className="agentStatus error">{error}</p> : null}
     </div>
   );
+}
+
+function agentLaunchErrorMessage(cause: unknown): string {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  if (/failed to fetch|load failed|networkerror/i.test(message)) {
+    return "Stackwise server is not reachable. Reopen the report with `stackwise open <report.json> --serve` and use that live localhost URL.";
+  }
+  return message;
 }
 
 function AgentLogo({ agent }: { agent: (typeof agentTargets)[number] }) {
