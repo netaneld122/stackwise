@@ -54,6 +54,7 @@ import { buildTreemap, type TreemapRect } from "./treemap";
 type GraphLayout = "TB" | "LR" | "RL" | "BT";
 type GraphNavigationMode = "default" | "focus" | "callers";
 type ThemeMode = "light" | "dark";
+type AgentId = "claude" | "codex" | "cursor";
 type GraphNavigationState = {
   rootId: number | null;
   callerDepth: number;
@@ -85,6 +86,11 @@ const graphLayoutOptions: Array<{ value: GraphLayout; label: string }> = [
   { value: "LR", label: "Left to right" },
   { value: "RL", label: "Right to left" },
   { value: "BT", label: "Bottom up" },
+];
+const agentTargets: Array<{ id: AgentId; label: string }> = [
+  { id: "claude", label: "Claude" },
+  { id: "codex", label: "Codex" },
+  { id: "cursor", label: "Cursor" },
 ];
 
 export function App() {
@@ -796,8 +802,79 @@ function Details({ symbol }: { symbol: SymbolReport | null }) {
           ))}
         </div>
       </div>
+      <AgentActions symbol={symbol} />
       <CodePanel context={context} loading={loading} popout={popout} setPopout={setPopout} symbol={symbol} />
     </>
+  );
+}
+
+type AgentHandoffResponse = {
+  agent: string;
+  prompt_path: string;
+  context_path: string;
+  script_path: string;
+  command: string;
+  message: string;
+};
+
+function AgentActions({ symbol }: { symbol: SymbolReport }) {
+  const [busyAgent, setBusyAgent] = useState<AgentId | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const launchAgent = async (agent: AgentId) => {
+    setBusyAgent(agent);
+    setStatus(null);
+    setError(null);
+    try {
+      const response = await fetch("/api/agent-handoff", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ agent, symbol_id: symbol.id }),
+      });
+      const text = await response.text();
+      let payload: AgentHandoffResponse | null = null;
+      try {
+        payload = JSON.parse(text) as AgentHandoffResponse;
+      } catch {
+        payload = null;
+      }
+      if (!response.ok) {
+        throw new Error(payload?.message ?? (text || `HTTP ${response.status}`));
+      }
+      const promptPath = payload?.prompt_path ? ` Prompt: ${payload.prompt_path}` : "";
+      setStatus(`${payload?.message ?? `Started ${agent}.`}${promptPath}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusyAgent(null);
+    }
+  };
+
+  return (
+    <div className="agentActions" aria-label="AI stack optimization actions">
+      <div className="agentActionsHeader">
+        <span>Optimize stack with</span>
+        {busyAgent ? <em>Launching...</em> : null}
+      </div>
+      <div className="agentButtons">
+        {agentTargets.map((agent) => (
+          <button
+            className={`agentButton ${agent.id}`}
+            disabled={busyAgent !== null}
+            key={agent.id}
+            type="button"
+            aria-label={`Send symbol to ${agent.label}`}
+            title={`Send ${symbol.demangled} to ${agent.label} with Stackwise context`}
+            onClick={() => launchAgent(agent.id)}
+          >
+            <span className={`agentLogo ${agent.id}Logo`} aria-hidden="true" />
+          </button>
+        ))}
+      </div>
+      {status ? <p className="agentStatus success" title={status}>{status}</p> : null}
+      {error ? <p className="agentStatus error">{error}</p> : null}
+    </div>
   );
 }
 

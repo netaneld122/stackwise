@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 
 test("renders the application shell", async ({ page }) => {
+  let agentRequest: unknown = null;
   await page.addInitScript(() => {
     if (!window.localStorage.getItem("stackwise.theme")) {
       window.localStorage.setItem("stackwise.theme", "light");
@@ -151,6 +152,20 @@ test("renders the application shell", async ({ page }) => {
       }),
     });
   });
+  await page.route("/api/agent-handoff", async (route) => {
+    agentRequest = JSON.parse(route.request().postData() ?? "{}");
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        agent: "Codex",
+        prompt_path: "D:/demo/target/stackwise-agent-handoffs/codex.prompt.md",
+        context_path: "D:/demo/target/stackwise-agent-handoffs/codex.context.json",
+        script_path: "D:/demo/target/stackwise-agent-handoffs/codex.cmd",
+        command: "codex -p \"Read the Stackwise optimization brief...\"",
+        message: "Started Codex with a Stackwise stack-optimization brief.",
+      }),
+    });
+  });
 
   await page.goto("/");
   await expect(page.getByText("Stackwise")).toBeVisible();
@@ -229,6 +244,11 @@ test("renders the application shell", async ({ page }) => {
   await expect(graphFocusStatus).toContainText("Showing callers");
   await expect(page.locator(".symbolNode.root")).toContainText("leaf");
   await leafNode.click();
+  await expect(page.getByRole("button", { name: "Send symbol to Claude" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send symbol to Cursor" })).toBeVisible();
+  await page.getByRole("button", { name: "Send symbol to Codex" }).click();
+  await expect(page.locator(".agentStatus.success")).toContainText("Started Codex");
+  expect(agentRequest).toEqual({ agent: "codex", symbol_id: 1 });
   await expect(page.getByRole("button", { name: "Open source" })).toHaveCount(0);
   const sourceSnippet = page.locator('.codePanel .codeBlock[title="Open full source file focused on this function"]');
   await expect(sourceSnippet).toBeVisible();

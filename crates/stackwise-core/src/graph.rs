@@ -10,10 +10,10 @@ pub fn compute_worst_paths(symbols: &mut [SymbolReport], edges: &[EdgeReport]) {
         match edge.kind {
             EdgeKind::DirectCall | EdgeKind::TailCall => {
                 if let Some(callee) = edge.callee {
-                    adjacency
-                        .entry(edge.caller)
-                        .or_default()
-                        .push(CallTarget { callee, kind: edge.kind });
+                    adjacency.entry(edge.caller).or_default().push(CallTarget {
+                        callee,
+                        kind: edge.kind,
+                    });
                 }
             }
             EdgeKind::IndirectCall => {

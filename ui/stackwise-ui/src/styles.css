@@ -840,6 +840,109 @@ dd {
   font-size: 12px;
 }
 
+.agentActions {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 8px;
+  border: 1px solid var(--context-border);
+  border-radius: 8px;
+  background: var(--context-bg);
+  padding: 10px;
+}
+
+.agentActionsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agentActionsHeader em {
+  font-style: normal;
+  color: var(--accent);
+}
+
+.agentButtons {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.agentButton {
+  width: 36px;
+  height: 32px;
+  padding: 0;
+  border-color: var(--line-strong);
+  background: var(--panel-strong);
+}
+
+.agentButton:hover:not(:disabled),
+.agentButton:focus-visible {
+  border-color: rgba(20, 184, 166, 0.56);
+  background: var(--accent-soft);
+}
+
+.agentLogo {
+  position: relative;
+  display: block;
+  width: 19px;
+  height: 19px;
+}
+
+.claudeLogo {
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 50%, var(--panel-strong) 0 22%, transparent 24%),
+    conic-gradient(from 18deg, #c2410c, #f59e0b, #b45309, #c2410c);
+}
+
+.codexLogo {
+  border-radius: 6px;
+  background: linear-gradient(135deg, #0f766e 0%, #172033 100%);
+}
+
+.codexLogo::after {
+  position: absolute;
+  inset: 5px;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  border-radius: 4px;
+  content: "";
+  transform: rotate(45deg);
+}
+
+.cursorLogo {
+  background: #172033;
+  clip-path: polygon(16% 4%, 86% 50%, 16% 96%, 38% 50%);
+}
+
+:root[data-theme="dark"] .cursorLogo {
+  background: #e5edf7;
+}
+
+.agentStatus {
+  overflow: hidden;
+  border-radius: 8px;
+  padding: 7px 8px;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentStatus.success {
+  background: var(--pill-bg);
+  color: var(--accent);
+}
+
+.agentStatus.error {
+  background: var(--graph-notice-bg);
+  color: var(--graph-notice-ink);
+}
+
 .panelHeader,
 .codeHeader {
   display: flex;
