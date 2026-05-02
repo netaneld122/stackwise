@@ -881,6 +881,18 @@ dd {
   background: var(--panel-strong);
 }
 
+.agentButton.claude {
+  color: #d97757;
+}
+
+.agentButton.codex {
+  color: #172033;
+}
+
+.agentButton.cursor {
+  color: #111827;
+}
+
 .agentButton:hover:not(:disabled),
 .agentButton:focus-visible {
   border-color: rgba(20, 184, 166, 0.56);
@@ -888,40 +900,26 @@ dd {
 }
 
 .agentLogo {
-  position: relative;
   display: block;
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.claudeLogo,
+.cursorLogo {
   width: 19px;
   height: 19px;
 }
 
-.claudeLogo {
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 50% 50%, var(--panel-strong) 0 22%, transparent 24%),
-    conic-gradient(from 18deg, #c2410c, #f59e0b, #b45309, #c2410c);
-}
-
 .codexLogo {
-  border-radius: 6px;
-  background: linear-gradient(135deg, #0f766e 0%, #172033 100%);
+  width: 18px;
+  height: 18px;
 }
 
-.codexLogo::after {
-  position: absolute;
-  inset: 5px;
-  border: 2px solid rgba(255, 255, 255, 0.92);
-  border-radius: 4px;
-  content: "";
-  transform: rotate(45deg);
-}
-
-.cursorLogo {
-  background: #172033;
-  clip-path: polygon(16% 4%, 86% 50%, 16% 96%, 38% 50%);
-}
-
-:root[data-theme="dark"] .cursorLogo {
-  background: #e5edf7;
+:root[data-theme="dark"] .agentButton.codex,
+:root[data-theme="dark"] .agentButton.cursor {
+  color: #f8fafc;
 }
 
 .agentStatus {
