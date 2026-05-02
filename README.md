@@ -37,7 +37,7 @@ Use `--serve` instead of `--open` when you want Stackwise to print a local URL w
 - **Drop-in analysis** for existing Rust projects.
 - **Versioned JSON reports** for CI, dashboards, and custom tooling.
 - **Interactive treemap UI** inspired by WinDirStat.
-- **Confidence-first results**: unknown stack data is reported as unknown, never as fake zeroes.
+- **Confidence-first results**: unmeasured stack data is reported clearly, never as fake zeroes.
 - **Artifact-first behavior** across build profiles, targets, and optimization modes.
 
 ## CLI

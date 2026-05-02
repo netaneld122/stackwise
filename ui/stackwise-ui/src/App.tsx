@@ -63,7 +63,7 @@ import {
   groupPriority,
   primaryCrateName,
   symbolCrate,
-  type ConfidenceFilter,
+  type MeasurementFilter,
   type Metric,
   type SourceFileContext,
   type SourceSnippet,
@@ -170,8 +170,8 @@ function ReportView({ report }: { report: StackwiseReport }) {
     setMetric,
     viewMode,
     setViewMode,
-    confidence,
-    setConfidence,
+    measurementFilter,
+    setMeasurementFilter,
     selectedId,
     selectedSymbol,
     reportPath,
@@ -198,10 +198,10 @@ function ReportView({ report }: { report: StackwiseReport }) {
   );
   const symbols = useMemo(
     () =>
-      filterSymbols(report.symbols, query, confidence).filter(
+      filterSymbols(report.symbols, query, measurementFilter).filter(
         (symbol) => !includedSymbolIds || includedSymbolIds.has(symbol.id),
       ),
-    [report.symbols, query, confidence, includedSymbolIds],
+    [report.symbols, query, measurementFilter, includedSymbolIds],
   );
   const selected = selectedSymbol();
   const visibleSymbolIds = useMemo(() => new Set(symbols.map((symbol) => symbol.id)), [symbols]);
@@ -352,8 +352,8 @@ function ReportView({ report }: { report: StackwiseReport }) {
           <div className="summaryChips">
             {primaryCrate ? <span className="chip appChip">App <strong>{primaryCrate}</strong></span> : null}
             <span className="chip">Symbols <strong>{report.summary.symbol_count.toLocaleString()}</strong></span>
-            <span className="chip">Known <strong>{report.summary.known_frame_count.toLocaleString()}</strong></span>
-            <span className="chip">Unknown <strong>{report.summary.unknown_frame_count.toLocaleString()}</strong></span>
+            <span className="chip">Measured <strong>{report.summary.known_frame_count.toLocaleString()}</strong></span>
+            <span className="chip">Unmeasured <strong>{report.summary.unknown_frame_count.toLocaleString()}</strong></span>
             <span className="chip">Confidence <strong>{report.summary.confidence}</strong></span>
           </div>
         </>
@@ -377,10 +377,10 @@ function ReportView({ report }: { report: StackwiseReport }) {
               <Search size={16} />
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Symbol, crate, module" />
             </div>
-            <select className="paneConfidenceSelect" value={confidence} onChange={(event) => setConfidence(event.target.value as ConfidenceFilter)}>
-              <option value="all">All confidence</option>
-              <option value="known">Known frames</option>
-              <option value="unknown">Unknown only</option>
+            <select className="paneConfidenceSelect" value={measurementFilter} onChange={(event) => setMeasurementFilter(event.target.value as MeasurementFilter)}>
+              <option value="all">All frames</option>
+              <option value="measured">Measured frames</option>
+              <option value="unmeasured">Unmeasured only</option>
             </select>
             {viewMode === "treemap" ? (
               <label className="paneMetricControl">
@@ -949,7 +949,7 @@ function Details({ symbol }: { symbol: SymbolReport | null }) {
           <dt>Worst path</dt>
           <dd>{formatBytes(symbol.worst_path.bytes)}</dd>
           <dt>Status</dt>
-          <dd>{symbol.worst_path.status}</dd>
+          <dd>{formatStackStatus(symbol.worst_path.status)}</dd>
           <dt>Confidence</dt>
           <dd>{symbol.confidence}</dd>
           <dt>Evidence</dt>
@@ -1741,6 +1741,13 @@ function metricLabel(metric: Metric): string {
   }[metric];
 }
 
+function formatStackStatus(status: string): string {
+  return {
+    known: "measured",
+    unknown: "unmeasured",
+  }[status] ?? status;
+}
+
 type FlowData = {
   graphNode: GraphNode;
   color: string;
@@ -2108,7 +2115,7 @@ function handlePositions(layout: GraphLayout): { target: Position; source: Posit
 function graphEdgeLabel(edge: ReturnType<typeof buildFocusedCallGraph>["edges"][number]): string {
   const delta = edge.addedStackBytes == null ? null : `+${formatBytes(edge.addedStackBytes)}`;
   if (edge.kind === "tail_call") return delta ? `${delta} tail` : "tail";
-  if (edge.kind === "direct_call") return delta ?? "unknown";
+  if (edge.kind === "direct_call") return delta ?? "unmeasured";
   return edgeKindShortLabel(edge.kind);
 }
 

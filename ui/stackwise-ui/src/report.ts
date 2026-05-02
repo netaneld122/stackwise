@@ -97,7 +97,7 @@ export interface Diagnostic {
 }
 
 export type Metric = "own" | "worst" | "code" | "risk";
-export type ConfidenceFilter = "all" | "known" | "unknown";
+export type MeasurementFilter = "all" | "measured" | "unmeasured";
 export type ViewMode = "treemap" | "call_graph";
 
 export interface SymbolContext {
@@ -135,7 +135,7 @@ export function metricValue(symbol: SymbolReport, metric: Metric): number {
 export function filterSymbols(
   symbols: SymbolReport[],
   query: string,
-  confidence: ConfidenceFilter,
+  measurementFilter: MeasurementFilter,
 ): SymbolReport[] {
   const normalized = query.trim().toLowerCase();
   return symbols.filter((symbol) => {
@@ -145,11 +145,11 @@ export function filterSymbols(
       symbol.name.toLowerCase().includes(normalized) ||
       (symbol.crate_name ?? "").toLowerCase().includes(normalized) ||
       symbol.module_path.join("::").toLowerCase().includes(normalized);
-    const known = symbol.own_frame.bytes != null;
+    const measured = symbol.own_frame.bytes != null;
     const matchesConfidence =
-      confidence === "all" ||
-      (confidence === "known" && known) ||
-      (confidence === "unknown" && !known);
+      measurementFilter === "all" ||
+      (measurementFilter === "measured" && measured) ||
+      (measurementFilter === "unmeasured" && !measured);
     return matchesQuery && matchesConfidence;
   });
 }

@@ -898,7 +898,7 @@ Optimize stack usage for this function without changing program behavior.
 
 {callees}
 
-## Worst Known Path
+## Worst Measured Path
 
 {worst_path_symbols}
 
@@ -977,7 +977,7 @@ fn graph_edges_markdown(edges: &[AgentGraphEdgeContext]) -> String {
 
 fn symbols_markdown(symbols: &[SymbolReport]) -> String {
     if symbols.is_empty() {
-        return "- no known worst path symbols".to_owned();
+        return "- no measured worst path symbols".to_owned();
     }
     symbols
         .iter()

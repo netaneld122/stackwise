@@ -42,8 +42,8 @@ where
             run_check(
                 &report,
                 command.max_own_frame,
-                command.max_known_path,
-                command.fail_on_unknown,
+                command.max_measured_path,
+                command.fail_on_unmeasured,
             )?;
         }
         Some(Commands::Doctor) => {
@@ -99,8 +99,8 @@ fn read_report(path: &Utf8Path) -> anyhow::Result<StackwiseReport> {
 fn run_check(
     report: &StackwiseReport,
     max_own_frame: Option<u64>,
-    max_known_path: Option<u64>,
-    fail_on_unknown: bool,
+    max_measured_path: Option<u64>,
+    fail_on_unmeasured: bool,
 ) -> anyhow::Result<()> {
     let mut failures = Vec::new();
 
@@ -117,11 +117,11 @@ fn run_check(
         }
     }
 
-    if let Some(limit) = max_known_path {
+    if let Some(limit) = max_measured_path {
         for symbol in &report.symbols {
             if symbol.worst_path.bytes.is_some_and(|bytes| bytes > limit) {
                 failures.push(format!(
-                    "known path {} bytes exceeds {} from {}",
+                    "measured path {} bytes exceeds {} from {}",
                     symbol.worst_path.bytes.unwrap_or_default(),
                     limit,
                     symbol.demangled
@@ -130,9 +130,9 @@ fn run_check(
         }
     }
 
-    if fail_on_unknown && report.summary.unknown_frame_count > 0 {
+    if fail_on_unmeasured && report.summary.unknown_frame_count > 0 {
         failures.push(format!(
-            "{} symbols have unknown frame sizes",
+            "{} symbols have unmeasured frame sizes",
             report.summary.unknown_frame_count
         ));
     }
@@ -150,7 +150,7 @@ fn run_check(
 
 pub(crate) fn print_summary(report: &StackwiseReport) {
     println!(
-        "Analyzed {} symbols, {} edges, {} known frames, {} unknown frames",
+        "Analyzed {} symbols, {} edges, {} measured frames, {} unmeasured frames",
         report.summary.symbol_count,
         report.summary.edge_count,
         report.summary.known_frame_count,
@@ -166,7 +166,7 @@ pub(crate) fn print_summary(report: &StackwiseReport) {
 
     if let Some(max) = &report.summary.max_worst_path {
         println!(
-            "Largest known path: {} bytes from {}",
+            "Largest measured path: {} bytes from {}",
             max.bytes, max.demangled
         );
     }

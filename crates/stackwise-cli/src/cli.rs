@@ -121,11 +121,11 @@ pub struct CheckCommand {
     #[arg(long)]
     pub max_own_frame: Option<u64>,
 
-    #[arg(long)]
-    pub max_known_path: Option<u64>,
+    #[arg(long = "max-measured-path", alias = "max-known-path")]
+    pub max_measured_path: Option<u64>,
 
-    #[arg(long)]
-    pub fail_on_unknown: bool,
+    #[arg(long = "fail-on-unmeasured", alias = "fail-on-unknown")]
+    pub fail_on_unmeasured: bool,
 }
 
 #[derive(Debug, Args)]

@@ -47,7 +47,7 @@ pub fn analyze_artifact(
         diagnostics.push(Diagnostic {
             level: DiagnosticLevel::Warning,
             code: "stackwise.no_frame_evidence".to_owned(),
-            message: "No exact stack-frame metadata was found; stack sizes are reported as unknown instead of zero.".to_owned(),
+            message: "No exact stack-frame metadata was found; stack sizes are reported as unmeasured instead of fake zeroes.".to_owned(),
         });
     }
 

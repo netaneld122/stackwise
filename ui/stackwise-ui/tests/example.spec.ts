@@ -152,6 +152,17 @@ test("renders the application shell", async ({ page }) => {
       }),
     });
   });
+  await page.route("/api/agent-brief", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        brief_id: "brief-1",
+        prompt_path: "D:/demo/target/stackwise-agent-handoffs/codex.prompt.md",
+        context_path: "D:/demo/target/stackwise-agent-handoffs/codex.context.json",
+        message: "Generated Stackwise optimization markdown.",
+      }),
+    });
+  });
   await page.route("/api/agent-handoff", async (route) => {
     agentRequest = JSON.parse(route.request().postData() ?? "{}");
     await route.fulfill({
@@ -183,7 +194,10 @@ test("renders the application shell", async ({ page }) => {
   await page.getByRole("button", { name: "Switch to light theme" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await expect(page.getByRole("button", { name: "Switch to dark theme" })).toContainText("Dark");
-  await expect(page.locator("footer")).toContainText("4 symbols");
+  await expect(page.locator(".summaryChips")).toContainText("Measured");
+  await expect(page.locator(".summaryChips")).toContainText("Unmeasured");
+  await expect(page.locator("footer")).toContainText("Analysis JSON");
+  await expect(page.locator("footer")).toContainText("demo");
   await expect(page.locator("header").getByPlaceholder("Symbol, crate, module")).toHaveCount(0);
   await expect(page.locator("header").getByRole("combobox")).toHaveCount(0);
   await expect(page.locator("main").getByPlaceholder("Symbol, crate, module")).toBeVisible();
@@ -235,7 +249,7 @@ test("renders the application shell", async ({ page }) => {
   );
   expect(horizontalGap).toBeLessThanOrEqual(12);
   expect(verticalGap).toBeLessThanOrEqual(12);
-  await expect(page.getByRole("menuitem", { name: "Focus here" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Set as root" })).toBeVisible();
   await page.getByRole("menuitem", { name: "Show callers" }).click();
   await expect(graphFocusStatus).toContainText("Showing callers");
   await expect(graphFocusStatus).toContainText("demo::leaf");
@@ -249,12 +263,15 @@ test("renders the application shell", async ({ page }) => {
   await expect(graphFocusStatus).toContainText("Showing callers");
   await expect(page.locator(".symbolNode.root")).toContainText("leaf");
   await leafNode.click();
-  await expect(page.getByRole("button", { name: "Send symbol to Claude" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Send symbol to Cursor" })).toBeVisible();
   await expect(page.getByText("Optimize with AI")).toBeVisible();
-  await page.getByRole("button", { name: "Send symbol to Codex" }).click();
+  await expect(page.getByRole("button", { name: "Generate markdown" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send generated markdown to Claude" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Generate markdown" }).click();
+  await expect(page.getByRole("button", { name: "Send generated markdown to Claude" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send generated markdown to Cursor" })).toBeVisible();
+  await page.getByRole("button", { name: "Send generated markdown to Codex" }).click();
   await expect(page.locator(".agentStatus.success")).toContainText("Started Codex");
-  expect(agentRequest).toEqual({ agent: "codex", symbol_id: 1 });
+  expect(agentRequest).toEqual({ agent: "codex", symbol_id: 1, brief_id: "brief-1" });
   await expect(page.getByRole("button", { name: "Open source" })).toHaveCount(0);
   const sourceSnippet = page.locator('.codePanel .codeBlock[title="Open full source file focused on this function"]');
   await expect(sourceSnippet).toBeVisible();
@@ -353,7 +370,7 @@ test("renders call graph minimap nodes for larger reports", async ({ page }) => 
   await expect.poll(async () => page.locator(".callGraphMiniMap .react-flow__minimap-node").count()).toBeGreaterThan(8);
 });
 
-test("unknown-only filtering does not crash the treemap", async ({ page }) => {
+test("unmeasured-only filtering does not crash the treemap", async ({ page }) => {
   await page.route("/report.json", async (route) => {
     await route.fulfill({
       contentType: "application/json",
@@ -375,15 +392,15 @@ test("unknown-only filtering does not crash the treemap", async ({ page }) => {
           unknown_frame_count: 1,
           recursive_symbol_count: 0,
           indirect_edge_count: 0,
-          max_own_frame: { symbol_id: 0, bytes: 16, demangled: "demo::known" },
-          max_worst_path: { symbol_id: 0, bytes: 16, demangled: "demo::known" },
+          max_own_frame: { symbol_id: 0, bytes: 16, demangled: "demo::measured" },
+          max_worst_path: { symbol_id: 0, bytes: 16, demangled: "demo::measured" },
           confidence: "medium",
         },
         symbols: [
           {
             id: 0,
-            name: "demo::known",
-            demangled: "demo::known",
+            name: "demo::measured",
+            demangled: "demo::measured",
             crate_name: "demo",
             module_path: ["demo"],
             address: 1,
@@ -396,8 +413,8 @@ test("unknown-only filtering does not crash the treemap", async ({ page }) => {
           },
           {
             id: 1,
-            name: "demo::unknown",
-            demangled: "demo::unknown",
+            name: "demo::unmeasured",
+            demangled: "demo::unmeasured",
             crate_name: "demo",
             module_path: ["demo"],
             address: 2,
@@ -417,9 +434,9 @@ test("unknown-only filtering does not crash the treemap", async ({ page }) => {
   });
 
   await page.goto("/");
-  const confidenceSelect = page.locator(".paneConfidenceSelect");
-  await expect(confidenceSelect).toHaveCount(1);
-  await confidenceSelect.selectOption("unknown");
+  const measurementSelect = page.locator(".paneConfidenceSelect");
+  await expect(measurementSelect).toHaveCount(1);
+  await measurementSelect.selectOption("unmeasured");
   await expect(page.getByText("Stackwise")).toBeVisible();
   await expect(page.getByText("No positive own-frame values match the current filters.")).toBeVisible();
 });

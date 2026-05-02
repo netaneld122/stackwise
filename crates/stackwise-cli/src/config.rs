@@ -26,8 +26,10 @@ pub struct ReportSection {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetSection {
     pub max_own_frame: Option<u64>,
-    pub max_known_path: Option<u64>,
-    pub fail_on_unknown: Option<bool>,
+    #[serde(alias = "max_known_path")]
+    pub max_measured_path: Option<u64>,
+    #[serde(alias = "fail_on_unknown")]
+    pub fail_on_unmeasured: Option<bool>,
 }
 
 impl StackwiseConfig {
@@ -66,6 +68,6 @@ collapse_std = true
 
 [budgets]
 max_own_frame = 4096
-max_known_path = 16384
-fail_on_unknown = false
+max_measured_path = 16384
+fail_on_unmeasured = false
 "#;

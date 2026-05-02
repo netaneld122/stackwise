@@ -11,15 +11,15 @@ import {
 
 describe("report helpers", () => {
   it("filters by query and confidence", () => {
-    const symbols = [symbol(0, "demo::known", 16), symbol(1, "demo::unknown", null)];
+    const symbols = [symbol(0, "demo::measured", 16), symbol(1, "demo::unmeasured", null)];
 
-    expect(filterSymbols(symbols, "known", "known").map((item) => item.id)).toEqual([0]);
-    expect(filterSymbols(symbols, "", "unknown").map((item) => item.id)).toEqual([1]);
+    expect(filterSymbols(symbols, "measured", "measured").map((item) => item.id)).toEqual([0]);
+    expect(filterSymbols(symbols, "", "unmeasured").map((item) => item.id)).toEqual([1]);
   });
 
   it("keeps unresolved risk visible", () => {
-    expect(metricValue(symbol(0, "demo::unknown", null), "risk")).toBe(12);
-    expect(metricValue(symbol(1, "demo::known", 8), "risk")).toBe(0);
+    expect(metricValue(symbol(0, "demo::unmeasured", null), "risk")).toBe(12);
+    expect(metricValue(symbol(1, "demo::measured", 8), "risk")).toBe(0);
   });
 
   it("prioritizes the analyzed crate and groups it by module", () => {

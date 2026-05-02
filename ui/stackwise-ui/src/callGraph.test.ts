@@ -85,8 +85,8 @@ describe("call graph helpers", () => {
     expect(graph.edges[0].addedStackBytes).toBe(32);
   });
 
-  it("counts unknown frames as zero in cumulative graph totals", () => {
-    const symbols = [symbol(0, "demo::main", 16), symbol(1, "demo::unknown", null), symbol(2, "demo::leaf", 64)];
+  it("counts unmeasured frames as zero in cumulative graph totals", () => {
+    const symbols = [symbol(0, "demo::main", 16), symbol(1, "demo::unmeasured", null), symbol(2, "demo::leaf", 64)];
     const report = reportWith(symbols, [edge(0, 1, "direct_call"), edge(1, 2, "tail_call")]);
 
     const graph = buildFocusedCallGraph(report, symbols, {
@@ -97,17 +97,17 @@ describe("call graph helpers", () => {
       edgeKinds: allEdges,
     });
 
-    const unknown = graph.nodes.find((node) => node.id === "s:1");
+    const unmeasured = graph.nodes.find((node) => node.id === "s:1");
     const leaf = graph.nodes.find((node) => node.id === "s:2");
     const main = graph.nodes.find((node) => node.id === "s:0");
     const directEdge = graph.edges.find((edge) => edge.kind === "direct_call");
     const tailEdge = graph.edges.find((edge) => edge.kind === "tail_call");
-    expect(unknown && "cumulativeStackBytes" in unknown ? unknown.cumulativeStackBytes : null).toBe(16);
+    expect(unmeasured && "cumulativeStackBytes" in unmeasured ? unmeasured.cumulativeStackBytes : null).toBe(16);
     expect(leaf && "cumulativeStackBytes" in leaf ? leaf.cumulativeStackBytes : null).toBe(80);
     expect(main && "visibleWorstStackBytes" in main ? main.visibleWorstStackBytes : null).toBe(80);
     expect(main && "visibleWorstBranchIds" in main ? main.visibleWorstBranchIds : null).toEqual([0, 1, 2]);
-    expect(unknown && "visibleWorstStackBytes" in unknown ? unknown.visibleWorstStackBytes : null).toBe(64);
-    expect(unknown && "visibleWorstBranchIds" in unknown ? unknown.visibleWorstBranchIds : null).toEqual([1, 2]);
+    expect(unmeasured && "visibleWorstStackBytes" in unmeasured ? unmeasured.visibleWorstStackBytes : null).toBe(64);
+    expect(unmeasured && "visibleWorstBranchIds" in unmeasured ? unmeasured.visibleWorstBranchIds : null).toEqual([1, 2]);
     expect(leaf && "visibleWorstStackBytes" in leaf ? leaf.visibleWorstStackBytes : null).toBe(64);
     expect(leaf && "visibleWorstBranchIds" in leaf ? leaf.visibleWorstBranchIds : null).toEqual([2]);
     expect(directEdge?.addedStackBytes).toBe(0);
