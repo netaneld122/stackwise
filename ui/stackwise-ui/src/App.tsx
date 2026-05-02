@@ -961,6 +961,9 @@ type FlowData = {
 type StackwiseFlowNode = FlowNode<FlowData, "stackwise">;
 
 const nodeTypes = { stackwise: StackwiseGraphNode };
+const GRAPH_CONTEXT_MENU_WIDTH = 190;
+const GRAPH_CONTEXT_MENU_HEIGHT = 92;
+const GRAPH_CONTEXT_MENU_GAP = 8;
 
 function CallGraphView({
   report,
@@ -1061,10 +1064,14 @@ function CallGraphView({
           event.preventDefault();
           const graphNode = node.data.graphNode;
           if (!("symbol" in graphNode)) return;
+          const nodeElement =
+            document.querySelector<HTMLElement>(`.react-flow__node[data-id="${cssAttrValue(node.id)}"]`) ??
+            (event.target instanceof Element ? event.target.closest<HTMLElement>(".react-flow__node") : null) ??
+            event.currentTarget;
+          const position = positionGraphContextMenu(nodeElement.getBoundingClientRect());
           setSelectedId(graphNode.symbol.id);
           setContextMenu({
-            x: Math.min(event.clientX, window.innerWidth - 220),
-            y: Math.min(event.clientY, window.innerHeight - 110),
+            ...position,
             symbol: graphNode.symbol,
           });
         }}
@@ -1094,36 +1101,39 @@ function CallGraphView({
           />
         ) : null}
       </ReactFlow>
-      {contextMenu ? (
-        <div
-          className="graphContextMenu"
-          role="menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-          onClick={(event) => event.stopPropagation()}
-          onContextMenu={(event) => event.preventDefault()}
-        >
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              onPivotSymbol(contextMenu.symbol.id);
-              setContextMenu(null);
-            }}
-          >
-            <RotateCcw size={14} /> Focus here
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              onShowCallers(contextMenu.symbol.id);
-              setContextMenu(null);
-            }}
-          >
-            <GitBranch size={14} /> Show callers
-          </button>
-        </div>
-      ) : null}
+      {contextMenu
+        ? createPortal(
+            <div
+              className="graphContextMenu"
+              role="menu"
+              style={{ left: contextMenu.x, top: contextMenu.y }}
+              onClick={(event) => event.stopPropagation()}
+              onContextMenu={(event) => event.preventDefault()}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onPivotSymbol(contextMenu.symbol.id);
+                  setContextMenu(null);
+                }}
+              >
+                <RotateCcw size={14} /> Focus here
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onShowCallers(contextMenu.symbol.id);
+                  setContextMenu(null);
+                }}
+              >
+                <GitBranch size={14} /> Show callers
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
@@ -1481,6 +1491,20 @@ function symbolIdsForModules(tree: ModuleTree, includedModules: Set<string> | nu
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function cssAttrValue(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function positionGraphContextMenu(rect: DOMRect): { x: number; y: number } {
+  const right = rect.right + GRAPH_CONTEXT_MENU_GAP;
+  const left = rect.left - GRAPH_CONTEXT_MENU_WIDTH - GRAPH_CONTEXT_MENU_GAP;
+  const maxX = Math.max(GRAPH_CONTEXT_MENU_GAP, window.innerWidth - GRAPH_CONTEXT_MENU_WIDTH - GRAPH_CONTEXT_MENU_GAP);
+  const maxY = Math.max(GRAPH_CONTEXT_MENU_GAP, window.innerHeight - GRAPH_CONTEXT_MENU_HEIGHT - GRAPH_CONTEXT_MENU_GAP);
+  const x = right <= maxX ? right : clamp(left, GRAPH_CONTEXT_MENU_GAP, maxX);
+  const y = clamp(rect.top + rect.height / 2 - GRAPH_CONTEXT_MENU_HEIGHT / 2, GRAPH_CONTEXT_MENU_GAP, maxY);
+  return { x, y };
 }
 
 function readableText(hex: string): string {

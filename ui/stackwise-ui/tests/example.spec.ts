@@ -169,8 +169,24 @@ test("renders the application shell", async ({ page }) => {
   await expect(page.getByText("+24 B")).toBeVisible();
   const leafNode = page.locator(".react-flow__node").filter({ hasText: "demo::leaf" });
   await expect(leafNode).toHaveCount(1);
+  const leafNodeBox = await leafNode.boundingBox();
   await leafNode.click({ button: "right" });
-  await expect(page.getByRole("menu")).toBeVisible();
+  const graphMenu = page.getByRole("menu");
+  await expect(graphMenu).toBeVisible();
+  const graphMenuBox = await graphMenu.boundingBox();
+  if (!leafNodeBox || !graphMenuBox) throw new Error("Expected call graph card and context menu bounds");
+  const horizontalGap = Math.max(
+    0,
+    graphMenuBox.x - (leafNodeBox.x + leafNodeBox.width),
+    leafNodeBox.x - (graphMenuBox.x + graphMenuBox.width),
+  );
+  const verticalGap = Math.max(
+    0,
+    graphMenuBox.y - (leafNodeBox.y + leafNodeBox.height),
+    leafNodeBox.y - (graphMenuBox.y + graphMenuBox.height),
+  );
+  expect(horizontalGap).toBeLessThanOrEqual(12);
+  expect(verticalGap).toBeLessThanOrEqual(12);
   await expect(page.getByRole("menuitem", { name: "Focus here" })).toBeVisible();
   await page.getByRole("menuitem", { name: "Show callers" }).click();
   await expect(page.locator(".symbolNode.root")).toContainText("leaf");
