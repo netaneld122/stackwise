@@ -147,6 +147,10 @@ test("renders the application shell", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("Stackwise")).toBeVisible();
   await expect(page.locator("footer")).toContainText("4 symbols");
+  await expect(page.locator("header").getByPlaceholder("Symbol, crate, module")).toHaveCount(0);
+  await expect(page.locator("header").getByRole("combobox")).toHaveCount(0);
+  await expect(page.locator("main").getByPlaceholder("Symbol, crate, module")).toBeVisible();
+  await expect(page.locator(".paneToolbar").getByRole("combobox")).toHaveCount(2);
   const stdRow = page.getByRole("button", { name: "std 1 symbols" });
   const coreRow = page.getByRole("button", { name: "core 1 symbols" });
   const stdCheckbox = stdRow.getByRole("checkbox");
@@ -177,7 +181,7 @@ test("renders the application shell", async ({ page }) => {
   const leafNode = page.locator(".react-flow__node").filter({ hasText: "demo::leaf" });
   await expect(leafNode).toHaveCount(1);
   const leafNodeBox = await leafNode.boundingBox();
-  await leafNode.click({ button: "right" });
+  await leafNode.click({ button: "right", position: { x: 18, y: 18 } });
   const graphMenu = page.getByRole("menu");
   await expect(graphMenu).toBeVisible();
   const graphMenuBox = await graphMenu.boundingBox();
@@ -353,7 +357,7 @@ test("unknown-only filtering does not crash the treemap", async ({ page }) => {
   });
 
   await page.goto("/");
-  const confidenceSelect = page.locator(".controls > select");
+  const confidenceSelect = page.locator(".paneConfidenceSelect");
   await expect(confidenceSelect).toHaveCount(1);
   await confidenceSelect.selectOption("unknown");
   await expect(page.getByText("Stackwise")).toBeVisible();

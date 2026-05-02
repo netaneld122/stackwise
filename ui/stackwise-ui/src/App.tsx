@@ -221,26 +221,13 @@ function ReportView({ report }: { report: StackwiseReport }) {
     <Shell
       status={status}
       toolbar={
-        <>
-          <div className="summaryChips">
-            {primaryCrate ? <span className="chip appChip">App <strong>{primaryCrate}</strong></span> : null}
-            <span className="chip">Symbols <strong>{report.summary.symbol_count.toLocaleString()}</strong></span>
-            <span className="chip">Known <strong>{report.summary.known_frame_count.toLocaleString()}</strong></span>
-            <span className="chip">Unknown <strong>{report.summary.unknown_frame_count.toLocaleString()}</strong></span>
-            <span className="chip">Confidence <strong>{report.summary.confidence}</strong></span>
-          </div>
-          <div className="controls">
-            <div className="searchBox">
-              <Search size={16} />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Symbol, crate, module" />
-            </div>
-            <select value={confidence} onChange={(event) => setConfidence(event.target.value as ConfidenceFilter)}>
-              <option value="all">All confidence</option>
-              <option value="known">Known frames</option>
-              <option value="unknown">Unknown only</option>
-            </select>
-          </div>
-        </>
+        <div className="summaryChips">
+          {primaryCrate ? <span className="chip appChip">App <strong>{primaryCrate}</strong></span> : null}
+          <span className="chip">Symbols <strong>{report.summary.symbol_count.toLocaleString()}</strong></span>
+          <span className="chip">Known <strong>{report.summary.known_frame_count.toLocaleString()}</strong></span>
+          <span className="chip">Unknown <strong>{report.summary.unknown_frame_count.toLocaleString()}</strong></span>
+          <span className="chip">Confidence <strong>{report.summary.confidence}</strong></span>
+        </div>
       }
       left={
         <ModuleList
@@ -256,17 +243,28 @@ function ReportView({ report }: { report: StackwiseReport }) {
       <div className="middlePane">
         <div className="middlePaneDock">
           <ViewTabs viewMode={viewMode} setViewMode={setViewMode} />
-          {viewMode === "treemap" ? (
-            <label className="paneMetricControl">
-              Metric
-              <select value={metric} onChange={(event) => setMetric(event.target.value as Metric)}>
-                <option value="own">Own frame</option>
-                <option value="worst">Worst path</option>
-                <option value="code">Code size</option>
-                <option value="risk">Unresolved risk</option>
-              </select>
-            </label>
-          ) : null}
+          <div className="paneToolbar">
+            <div className="searchBox paneSearchBox">
+              <Search size={16} />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Symbol, crate, module" />
+            </div>
+            <select className="paneConfidenceSelect" value={confidence} onChange={(event) => setConfidence(event.target.value as ConfidenceFilter)}>
+              <option value="all">All confidence</option>
+              <option value="known">Known frames</option>
+              <option value="unknown">Unknown only</option>
+            </select>
+            {viewMode === "treemap" ? (
+              <label className="paneMetricControl">
+                Metric
+                <select value={metric} onChange={(event) => setMetric(event.target.value as Metric)}>
+                  <option value="own">Own frame</option>
+                  <option value="worst">Worst path</option>
+                  <option value="code">Code size</option>
+                  <option value="risk">Unresolved risk</option>
+                </select>
+              </label>
+            ) : null}
+          </div>
         </div>
         {viewMode === "call_graph" ? (
           <GraphControls

@@ -164,6 +164,7 @@ canvas {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  flex-wrap: wrap;
   border-bottom: 1px solid var(--line);
   padding: 8px 10px;
   background: rgba(255, 255, 255, 0.78);
@@ -260,8 +261,7 @@ canvas {
   stroke-width: 1.2;
 }
 
-.summaryChips,
-.controls {
+.summaryChips {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -271,10 +271,6 @@ canvas {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-}
-
-.controls {
-  justify-content: flex-end;
 }
 
 .viewTabs {
@@ -303,6 +299,20 @@ canvas {
   background: #101828;
   color: #ffffff;
   box-shadow: 0 6px 16px rgba(15, 23, 42, 0.14);
+}
+
+.paneToolbar {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 420px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.paneConfidenceSelect {
+  min-width: 136px;
 }
 
 .graphToolbar {
@@ -1200,17 +1210,12 @@ body.resizing * {
     flex-basis: 100%;
   }
 
-  .controls {
-    flex: 1;
-    flex-wrap: wrap;
+  .paneToolbar {
+    justify-content: flex-start;
   }
 
-  .searchBox {
+  .paneSearchBox {
     width: min(100%, 320px);
-  }
-
-  .middlePaneDock {
-    flex-wrap: wrap;
   }
 
   .graphToolbar {
@@ -1225,7 +1230,7 @@ body.resizing * {
     grid-template-rows: auto 170px minmax(320px, 1fr) 300px 36px;
   }
 
-  .controls,
+  .paneToolbar,
   .summaryChips {
     flex-wrap: wrap;
     justify-content: flex-start;
