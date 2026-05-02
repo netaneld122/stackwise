@@ -30,32 +30,50 @@ pub fn serve_report(report_path: Utf8PathBuf, open_browser: bool) -> anyhow::Res
         let _ = open::that(&url);
     }
 
+    let mut active_report_path = report_path;
+
     for mut request in server.incoming_requests() {
         let method = request.method().clone();
         let url = request.url().to_owned();
 
         let response = match (method, url.as_str()) {
             (Method::Get, "/report.json") | (Method::Get, "/api/report") => {
-                match fs::read(report_path.as_std_path()) {
+                match fs::read(active_report_path.as_std_path()) {
                     Ok(data) => json_response(data),
                     Err(error) => {
                         text_response(StatusCode(500), format!("failed to read report: {error}"))
                     }
                 }
             }
+            (Method::Get, "/api/report-info") => json_value_response(&ReportInfoResponse {
+                path: active_report_path.to_string(),
+            }),
             (Method::Get, url) if url.starts_with("/api/symbol-context") => {
-                symbol_context_response(&report_path, url)
+                symbol_context_response(&active_report_path, url)
             }
             (Method::Get, url) if url.starts_with("/api/source-file") => {
-                source_file_response(&report_path, url)
+                source_file_response(&active_report_path, url)
             }
             (Method::Get, url) if url.starts_with("/api/agent-handoff-status") => {
-                agent_handoff_status_response(&report_path, url)
+                agent_handoff_status_response(&active_report_path, url)
+            }
+            (Method::Post, url) if url.starts_with("/api/load-report") => {
+                let mut body = String::new();
+                let _ = request.as_reader().read_to_string(&mut body);
+                load_report_response(&mut active_report_path, url, &body)
+            }
+            (Method::Post, "/api/open-analysis-file") => {
+                open_analysis_file_response(&active_report_path)
+            }
+            (Method::Post, "/api/agent-brief") => {
+                let mut body = String::new();
+                let _ = request.as_reader().read_to_string(&mut body);
+                agent_brief_response(&active_report_path, &body)
             }
             (Method::Post, "/api/agent-handoff") => {
                 let mut body = String::new();
                 let _ = request.as_reader().read_to_string(&mut body);
-                agent_handoff_response(&report_path, &body)
+                agent_handoff_response(&active_report_path, &body)
             }
             (Method::Post, "/api/open-source") => {
                 let mut body = String::new();
@@ -223,6 +241,61 @@ fn source_file_response(
     json_response(serde_json::to_vec(&SourceFileContext { source, messages }).unwrap_or_default())
 }
 
+fn load_report_response(
+    active_report_path: &mut Utf8PathBuf,
+    url: &str,
+    body: &str,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    if let Err(error) = serde_json::from_str::<StackwiseReport>(body) {
+        return text_response(
+            StatusCode(400),
+            format!("invalid Stackwise report JSON: {error}"),
+        );
+    }
+
+    let file_name = query_param(url, "file_name")
+        .map(|name| sanitize_file_component(&name))
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "analysis".to_owned());
+    let report_dir = temp_stackwise_dir().join("reports");
+    if let Err(error) = fs::create_dir_all(&report_dir) {
+        return text_response(
+            StatusCode(500),
+            format!("failed to create report temp directory: {error}"),
+        );
+    }
+    let report_path = report_dir.join(format!("{}-{file_name}.json", unix_timestamp()));
+    if let Err(error) = fs::write(&report_path, body) {
+        return text_response(
+            StatusCode(500),
+            format!("failed to write report temp file: {error}"),
+        );
+    }
+    let Ok(report_path) = Utf8PathBuf::from_path_buf(report_path) else {
+        return text_response(
+            StatusCode(500),
+            "report temp path is not valid UTF-8".to_owned(),
+        );
+    };
+
+    *active_report_path = report_path.clone();
+    json_value_response(&ReportInfoResponse {
+        path: report_path.to_string(),
+    })
+}
+
+fn open_analysis_file_response(report_path: &Utf8PathBuf) -> Response<std::io::Cursor<Vec<u8>>> {
+    match open::that(report_path.as_std_path()) {
+        Ok(()) => json_value_response(&OpenPathResponse {
+            message: format!("Opened {}", report_path),
+        }),
+        Err(error) => text_response(
+            StatusCode(500),
+            format!("failed to open analysis file: {error}"),
+        ),
+    }
+}
+
 fn agent_handoff_status_response(
     report_path: &Utf8PathBuf,
     url: &str,
@@ -249,6 +322,31 @@ fn agent_handoff_status_response(
     json_value_response(&enrich_agent_status(refresh_agent_status_log_tail(status)))
 }
 
+fn agent_brief_response(
+    report_path: &Utf8PathBuf,
+    body: &str,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let request = match serde_json::from_str::<AgentBriefRequest>(body) {
+        Ok(request) => request,
+        Err(error) => {
+            return text_response(
+                StatusCode(400),
+                format!("invalid agent brief request: {error}"),
+            );
+        }
+    };
+
+    match write_agent_brief(report_path, request.symbol_id, "brief", "an AI agent") {
+        Ok(brief) => json_value_response(&AgentBriefResponse {
+            brief_id: brief.brief_id,
+            prompt_path: brief.prompt_path.to_string_lossy().to_string(),
+            context_path: brief.context_path.to_string_lossy().to_string(),
+            message: "Generated Stackwise optimization markdown.".to_owned(),
+        }),
+        Err((status, message)) => text_response(status, message),
+    }
+}
+
 fn agent_handoff_response(
     report_path: &Utf8PathBuf,
     body: &str,
@@ -263,76 +361,41 @@ fn agent_handoff_response(
         }
     };
 
-    let report = match fs::read(report_path.as_std_path())
-        .ok()
-        .and_then(|data| serde_json::from_slice::<StackwiseReport>(&data).ok())
-    {
-        Some(report) => report,
-        None => return text_response(StatusCode(500), "failed to read report".to_owned()),
+    let brief = match request.brief_id.as_deref() {
+        Some(brief_id) => match existing_agent_brief(report_path, brief_id) {
+            Some(brief) => brief,
+            None => return text_response(StatusCode(404), "agent brief not found".to_owned()),
+        },
+        None => match write_agent_brief(
+            report_path,
+            request.symbol_id,
+            request.agent.slug(),
+            request.agent.label(),
+        ) {
+            Ok(brief) => brief,
+            Err((status, message)) => return text_response(status, message),
+        },
     };
 
-    let Some(symbol) = report
-        .symbols
-        .iter()
-        .find(|symbol| symbol.id == request.symbol_id)
-    else {
-        return text_response(StatusCode(404), "symbol not found".to_owned());
-    };
-
-    let source = source_snippet(symbol, &report);
-    let disassembly = disassemble_symbol(symbol, &report);
     let handoff_dir = agent_handoff_dir(report_path);
-    if let Err(error) = fs::create_dir_all(&handoff_dir) {
-        return text_response(
-            StatusCode(500),
-            format!("failed to create agent handoff directory: {error}"),
-        );
-    }
-
     let handoff_id = format!(
         "{}-{}-{}",
         unix_timestamp(),
         request.agent.slug(),
-        sanitize_file_component(&symbol.demangled)
+        brief.brief_id
     );
-    let context_path = handoff_dir.join(format!("{handoff_id}.context.json"));
-    let prompt_path = handoff_dir.join(format!("{handoff_id}.prompt.md"));
     let script_path = handoff_dir.join(format!("{handoff_id}{}", shell_script_extension()));
     let status_path = handoff_dir.join(format!("{handoff_id}.status.json"));
     let log_path = handoff_dir.join(format!("{handoff_id}.log"));
-    let context = build_agent_handoff_context(report_path, &report, symbol, source, disassembly);
-    let prompt = build_agent_prompt(request.agent, &context, &context_path);
-
-    let context_json = match serde_json::to_vec_pretty(&context) {
-        Ok(data) => data,
-        Err(error) => {
-            return text_response(
-                StatusCode(500),
-                format!("failed to serialize agent context: {error}"),
-            );
-        }
-    };
-    if let Err(error) = fs::write(&context_path, context_json) {
-        return text_response(
-            StatusCode(500),
-            format!("failed to write agent context: {error}"),
-        );
-    }
-    if let Err(error) = fs::write(&prompt_path, prompt) {
-        return text_response(
-            StatusCode(500),
-            format!("failed to write agent prompt: {error}"),
-        );
-    }
     if let Err(error) = write_agent_script(AgentScriptConfig {
         script_path: &script_path,
         agent: request.agent,
         handoff_id: &handoff_id,
-        prompt_path: &prompt_path,
-        context_path: &context_path,
+        prompt_path: &brief.prompt_path,
+        context_path: &brief.context_path,
         status_path: &status_path,
         log_path: &log_path,
-        report: &report,
+        workspace_root: brief.workspace_root.as_deref(),
     }) {
         return text_response(
             StatusCode(500),
@@ -342,8 +405,8 @@ fn agent_handoff_response(
     let running_status = AgentHandoffStatus::running(
         &handoff_id,
         request.agent,
-        &prompt_path,
-        &context_path,
+        &brief.prompt_path,
+        &brief.context_path,
         &script_path,
         &log_path,
     );
@@ -361,8 +424,8 @@ fn agent_handoff_response(
             format!("failed to launch {}: {error}", request.agent.label()),
             None,
             AgentHandoffPaths {
-                prompt_path: &prompt_path,
-                context_path: &context_path,
+                prompt_path: &brief.prompt_path,
+                context_path: &brief.context_path,
                 script_path: &script_path,
                 log_path: &log_path,
             },
@@ -377,19 +440,118 @@ fn agent_handoff_response(
     json_value_response(&AgentHandoffResponse {
         agent: request.agent.label(),
         handoff_id,
-        prompt_path: prompt_path.to_string_lossy().to_string(),
-        context_path: context_path.to_string_lossy().to_string(),
+        prompt_path: brief.prompt_path.to_string_lossy().to_string(),
+        context_path: brief.context_path.to_string_lossy().to_string(),
         script_path: script_path.to_string_lossy().to_string(),
         status_path: status_path.to_string_lossy().to_string(),
         log_path: log_path.to_string_lossy().to_string(),
-        command: request
-            .agent
-            .command_preview(&agent_prompt_for_path(&prompt_path), &prompt_path),
+        command: request.agent.command_preview(
+            &agent_prompt_for_path(&brief.prompt_path),
+            &brief.prompt_path,
+        ),
         message: format!(
             "Started {} with a Stackwise stack-optimization brief.",
             request.agent.label()
         ),
     })
+}
+
+fn write_agent_brief(
+    report_path: &Utf8PathBuf,
+    symbol_id: u32,
+    slug: &str,
+    agent_label: &str,
+) -> Result<AgentBrief, (StatusCode, String)> {
+    let report = fs::read(report_path.as_std_path())
+        .ok()
+        .and_then(|data| serde_json::from_slice::<StackwiseReport>(&data).ok())
+        .ok_or_else(|| (StatusCode(500), "failed to read report".to_owned()))?;
+
+    let symbol = report
+        .symbols
+        .iter()
+        .find(|symbol| symbol.id == symbol_id)
+        .ok_or_else(|| (StatusCode(404), "symbol not found".to_owned()))?;
+
+    let handoff_dir = agent_handoff_dir(report_path);
+    fs::create_dir_all(&handoff_dir).map_err(|error| {
+        (
+            StatusCode(500),
+            format!("failed to create agent handoff directory: {error}"),
+        )
+    })?;
+
+    let brief_id = format!(
+        "{}-{}-{}",
+        unix_timestamp(),
+        sanitize_file_component(slug),
+        sanitize_file_component(&symbol.demangled)
+    );
+    let context_path = handoff_dir.join(format!("{brief_id}.context.json"));
+    let prompt_path = handoff_dir.join(format!("{brief_id}.prompt.md"));
+    let source = source_snippet(symbol, &report);
+    let disassembly = disassemble_symbol(symbol, &report);
+    let context = build_agent_handoff_context(report_path, &report, symbol, source, disassembly);
+    let prompt = build_agent_prompt(agent_label, &context, &context_path);
+
+    let context_json = serde_json::to_vec_pretty(&context).map_err(|error| {
+        (
+            StatusCode(500),
+            format!("failed to serialize agent context: {error}"),
+        )
+    })?;
+    fs::write(&context_path, context_json).map_err(|error| {
+        (
+            StatusCode(500),
+            format!("failed to write agent context: {error}"),
+        )
+    })?;
+    fs::write(&prompt_path, prompt).map_err(|error| {
+        (
+            StatusCode(500),
+            format!("failed to write agent prompt: {error}"),
+        )
+    })?;
+
+    Ok(AgentBrief {
+        brief_id,
+        prompt_path,
+        context_path,
+        workspace_root: report
+            .build
+            .as_ref()
+            .and_then(|build| build.workspace_root.as_deref())
+            .map(PathBuf::from),
+    })
+}
+
+fn existing_agent_brief(report_path: &Utf8PathBuf, brief_id: &str) -> Option<AgentBrief> {
+    if !is_safe_handoff_id(brief_id) {
+        return None;
+    }
+    let handoff_dir = agent_handoff_dir(report_path);
+    let prompt_path = handoff_dir.join(format!("{brief_id}.prompt.md"));
+    let context_path = handoff_dir.join(format!("{brief_id}.context.json"));
+    if !prompt_path.is_file() || !context_path.is_file() {
+        return None;
+    }
+
+    Some(AgentBrief {
+        brief_id: brief_id.to_owned(),
+        prompt_path,
+        context_path,
+        workspace_root: report_workspace_root(report_path),
+    })
+}
+
+fn report_workspace_root(report_path: &Utf8PathBuf) -> Option<PathBuf> {
+    let report = fs::read(report_path.as_std_path())
+        .ok()
+        .and_then(|data| serde_json::from_slice::<StackwiseReport>(&data).ok())?;
+    report
+        .build
+        .and_then(|build| build.workspace_root)
+        .map(PathBuf::from)
 }
 
 fn agent_prompt_for_path(prompt_path: &Path) -> String {
@@ -627,7 +789,7 @@ fn build_agent_handoff_context(
 }
 
 fn build_agent_prompt(
-    agent: AgentKind,
+    agent_label: &str,
     context: &AgentHandoffContext,
     context_path: &Path,
 ) -> String {
@@ -653,7 +815,6 @@ fn build_agent_prompt(
         .as_ref()
         .map(disassembly_markdown)
         .unwrap_or_else(|| "Disassembly unavailable.".to_owned());
-    let agent_label = agent.label();
     let report_path = context.report_path.as_str();
     let context_path = context_path.display();
     let artifact_path = context.artifact_path.as_str();
@@ -886,6 +1047,7 @@ fn compact_agent_log_tail(log: &str, fallback_bytes: usize) -> String {
         "127.0.0.1:1234",
         "lmstudio",
         "does not have access to Claude",
+        "disabled Claude subscription access",
         "Please login again",
         "contact your administrator",
         "not recognized as an internal or external command",
@@ -992,6 +1154,7 @@ fn friendly_agent_failure_message(
     let normalized = log.to_lowercase();
     if agent == Some(AgentKind::Claude)
         && (normalized.contains("does not have access to claude")
+            || normalized.contains("disabled claude subscription access")
             || normalized.contains("please login again")
             || normalized.contains("contact your administrator"))
     {
@@ -1030,12 +1193,12 @@ fn friendly_agent_failure_message(
     })
 }
 
-fn agent_handoff_dir(report_path: &Utf8PathBuf) -> PathBuf {
-    report_path
-        .as_std_path()
-        .parent()
-        .map(|parent| parent.join("stackwise-agent-handoffs"))
-        .unwrap_or_else(|| PathBuf::from("stackwise-agent-handoffs"))
+fn temp_stackwise_dir() -> PathBuf {
+    std::env::temp_dir().join("stackwise")
+}
+
+fn agent_handoff_dir(_report_path: &Utf8PathBuf) -> PathBuf {
+    temp_stackwise_dir().join("stackwise-agent-handoffs")
 }
 
 fn agent_handoff_status_path(report_path: &Utf8PathBuf, id: &str) -> Option<PathBuf> {
@@ -1101,7 +1264,7 @@ struct AgentScriptConfig<'a> {
     context_path: &'a Path,
     status_path: &'a Path,
     log_path: &'a Path,
-    report: &'a StackwiseReport,
+    workspace_root: Option<&'a Path>,
 }
 
 fn write_agent_script(config: AgentScriptConfig<'_>) -> anyhow::Result<()> {
@@ -1113,13 +1276,10 @@ fn write_agent_script(config: AgentScriptConfig<'_>) -> anyhow::Result<()> {
         context_path,
         status_path,
         log_path,
-        report,
+        workspace_root,
     } = config;
     let prompt = agent_prompt_for_path(prompt_path);
-    let cwd = report
-        .build
-        .as_ref()
-        .and_then(|build| build.workspace_root.as_deref())
+    let cwd = workspace_root
         .map(PathBuf::from)
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."));
@@ -1591,6 +1751,12 @@ fn symbol_bytes<'data>(file: &object::File<'data>, address: u64, size: u64) -> O
 struct AgentHandoffRequest {
     agent: AgentKind,
     symbol_id: u32,
+    brief_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentBriefRequest {
+    symbol_id: u32,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -1642,6 +1808,31 @@ struct AgentHandoffResponse {
     log_path: String,
     command: String,
     message: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AgentBriefResponse {
+    brief_id: String,
+    prompt_path: String,
+    context_path: String,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ReportInfoResponse {
+    path: String,
+}
+
+#[derive(Debug, Serialize)]
+struct OpenPathResponse {
+    message: String,
+}
+
+struct AgentBrief {
+    brief_id: String,
+    prompt_path: PathBuf,
+    context_path: PathBuf,
+    workspace_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1821,11 +2012,6 @@ mod tests {
     use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use stackwise_core::{
-        ArtifactInfo, BuildInfo, Confidence, ExactMode, GeneratorInfo, ObjectFormat,
-        StackwiseReport, Summary,
-    };
-
     #[test]
     fn detects_mixed_separator_rustc_library_paths() {
         let relative =
@@ -1930,6 +2116,14 @@ mod tests {
         assert!(message.contains("Claude is unavailable"));
         assert!(message.contains("Codex"));
         assert!(message.contains("OpenCode"));
+
+        let subscription_message = friendly_agent_failure_message(
+            Some(AgentKind::Claude),
+            "Your organization has disabled Claude subscription access for Claude Code.",
+            Some(1),
+        )
+        .expect("Claude subscription failure should be classified");
+        assert!(subscription_message.contains("Claude is unavailable"));
     }
 
     #[test]
@@ -2057,7 +2251,6 @@ mod tests {
         let log_path = root.join("brief.log");
 
         fs::create_dir_all(&root).expect("temp root is created");
-        let report = minimal_report(root.to_string_lossy().as_ref());
         write_agent_script(AgentScriptConfig {
             script_path: &script_path,
             agent: AgentKind::Claude,
@@ -2066,7 +2259,7 @@ mod tests {
             context_path: &context_path,
             status_path: &status_path,
             log_path: &log_path,
-            report: &report,
+            workspace_root: Some(&root),
         })
         .expect("script should be written");
 
@@ -2091,7 +2284,6 @@ mod tests {
         let log_path = root.join("brief.log");
 
         fs::create_dir_all(&root).expect("temp root is created");
-        let report = minimal_report(root.to_string_lossy().as_ref());
         write_agent_script(AgentScriptConfig {
             script_path: &script_path,
             agent: AgentKind::Codex,
@@ -2100,7 +2292,7 @@ mod tests {
             context_path: &context_path,
             status_path: &status_path,
             log_path: &log_path,
-            report: &report,
+            workspace_root: Some(&root),
         })
         .expect("script should be written");
 
@@ -2131,7 +2323,6 @@ mod tests {
         let log_path = root.join("brief.log");
 
         fs::create_dir_all(&root).expect("temp root is created");
-        let report = minimal_report(root.to_string_lossy().as_ref());
         write_agent_script(AgentScriptConfig {
             script_path: &script_path,
             agent: AgentKind::Opencode,
@@ -2140,7 +2331,7 @@ mod tests {
             context_path: &context_path,
             status_path: &status_path,
             log_path: &log_path,
-            report: &report,
+            workspace_root: Some(&root),
         })
         .expect("script should be written");
 
@@ -2181,7 +2372,6 @@ mod tests {
         .expect("fake agent is written");
         fs::write(&prompt_path, "optimize this").expect("prompt is written");
 
-        let report = minimal_report(root.to_string_lossy().as_ref());
         write_agent_script(AgentScriptConfig {
             script_path: &script_path,
             agent: AgentKind::Cursor,
@@ -2190,7 +2380,7 @@ mod tests {
             context_path: &context_path,
             status_path: &status_path,
             log_path: &log_path,
-            report: &report,
+            workspace_root: Some(&root),
         })
         .expect("script should be written");
 
@@ -2241,46 +2431,5 @@ mod tests {
             .expect("system clock is after unix epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("stackwise-rust-src-test-{nanos}"))
-    }
-
-    fn minimal_report(workspace_root: &str) -> StackwiseReport {
-        StackwiseReport {
-            schema_version: "0.1.0".to_owned(),
-            generator: GeneratorInfo {
-                name: "stackwise".to_owned(),
-                version: "0.1.0".to_owned(),
-            },
-            artifact: ArtifactInfo {
-                path: "demo.exe".to_owned(),
-                file_name: "demo.exe".to_owned(),
-                format: ObjectFormat::PeCoff,
-                architecture: "x86_64".to_owned(),
-                pointer_width: Some(64),
-                size_bytes: 1,
-            },
-            build: Some(BuildInfo {
-                workspace_root: Some(workspace_root.to_owned()),
-                package: Some("demo".to_owned()),
-                profile: Some("release".to_owned()),
-                target: None,
-                features: Vec::new(),
-                exact_mode: ExactMode::Auto,
-            }),
-            summary: Summary {
-                symbol_count: 0,
-                edge_count: 0,
-                known_frame_count: 0,
-                unknown_frame_count: 0,
-                recursive_symbol_count: 0,
-                indirect_edge_count: 0,
-                max_own_frame: None,
-                max_worst_path: None,
-                confidence: Confidence::Unknown,
-            },
-            symbols: Vec::new(),
-            edges: Vec::new(),
-            groups: Vec::new(),
-            diagnostics: Vec::new(),
-        }
     }
 }

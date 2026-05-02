@@ -12,6 +12,13 @@ export type AgentHandoffResponse = {
   message: string;
 };
 
+export type AgentBriefResponse = {
+  brief_id: string;
+  prompt_path: string;
+  context_path: string;
+  message: string;
+};
+
 export type AgentHandoffStatus = {
   id: string;
   agent: string;

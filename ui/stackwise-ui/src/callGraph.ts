@@ -27,6 +27,7 @@ export interface GraphSymbolNode {
   cumulativeStackStatus: GraphStackStatus;
   visibleWorstStackBytes: number | null;
   visibleWorstStackStatus: GraphStackStatus;
+  visibleWorstBranchIds: number[];
 }
 
 export interface GraphBoundaryNode {
@@ -171,6 +172,7 @@ export function buildFocusedCallGraph(
       cumulativeStackStatus: stack.status,
       visibleWorstStackBytes: 0,
       visibleWorstStackStatus: "known",
+      visibleWorstBranchIds: [id],
     };
   });
 
@@ -194,6 +196,7 @@ export function buildFocusedCallGraph(
       const worst = visibleWorstById.get(node.symbol.id);
       node.visibleWorstStackBytes = worst?.bytes ?? 0;
       node.visibleWorstStackStatus = worst?.status ?? "known";
+      node.visibleWorstBranchIds = worst?.path ?? [node.symbol.id];
     }
   }
 
@@ -377,27 +380,32 @@ function computeVisibleWorstStacks(
     outgoing.set(caller, [...(outgoing.get(caller) ?? []), { callee, kind: edge.kind }]);
   }
 
-  const memo = new Map<number, { bytes: number | null; status: GraphStackStatus }>();
+  const memo = new Map<number, { bytes: number | null; status: GraphStackStatus; path: number[] }>();
   const visiting = new Set<number>();
-  const visit = (id: number): { bytes: number | null; status: GraphStackStatus } => {
+  const visit = (id: number): { bytes: number | null; status: GraphStackStatus; path: number[] } => {
     const memoized = memo.get(id);
     if (memoized) return memoized;
 
     const symbol = index.byId.get(id);
-    if (!symbol) return { bytes: 0, status: "known" };
+    if (!symbol) return { bytes: 0, status: "known", path: [id] };
     const own = ownStack(symbol).bytes ?? 0;
-    if (visiting.has(id)) return { bytes: own, status: "known" };
+    if (visiting.has(id)) return { bytes: own, status: "known", path: [id] };
 
     visiting.add(id);
     let best = own;
+    let bestPath = [id];
     for (const edge of outgoing.get(id) ?? []) {
-      const calleeWorst = visit(edge.callee).bytes ?? 0;
-      const candidate = edge.kind === "tail_call" ? Math.max(own, calleeWorst) : own + calleeWorst;
-      best = Math.max(best, candidate);
+      const calleeWorst = visit(edge.callee);
+      const calleeBytes = calleeWorst.bytes ?? 0;
+      const candidate = edge.kind === "tail_call" ? Math.max(own, calleeBytes) : own + calleeBytes;
+      if (candidate > best) {
+        best = candidate;
+        bestPath = [id, ...calleeWorst.path.filter((pathId) => pathId !== id)];
+      }
     }
     visiting.delete(id);
 
-    const result = { bytes: best, status: "known" as GraphStackStatus };
+    const result = { bytes: best, status: "known" as GraphStackStatus, path: bestPath };
     memo.set(id, result);
     return result;
   };

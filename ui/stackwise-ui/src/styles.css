@@ -213,6 +213,47 @@ footer {
   font-variant-numeric: tabular-nums;
 }
 
+.analysisStatus {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.analysisStatus svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.analysisPathButton {
+  justify-content: flex-start;
+  min-width: 0;
+  max-width: min(980px, 70vw);
+  height: 26px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--tab-ink);
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analysisPathButton:hover,
+.analysisPathButton:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.statusError {
+  overflow: hidden;
+  color: var(--graph-notice-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 h1,
 h2,
 p {
@@ -393,6 +434,20 @@ canvas {
   color: var(--tab-ink);
   font-size: 12px;
   font-weight: 700;
+}
+
+.openAnalysisButton {
+  flex: 0 0 auto;
+  min-width: 150px;
+  border-color: rgba(15, 118, 110, 0.26);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.hiddenFileInput {
+  display: none;
 }
 
 .themeToggle:hover {
@@ -875,6 +930,42 @@ dd {
   gap: 7px;
 }
 
+.generateMarkdownButton {
+  justify-content: center;
+  width: 100%;
+  border-color: rgba(15, 118, 110, 0.28);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.briefPathRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.briefPathRow code {
+  overflow: hidden;
+  border: 1px solid var(--detail-code-border);
+  border-radius: 7px;
+  background: var(--detail-code-bg);
+  padding: 7px 8px;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.copyBriefButton {
+  height: 30px;
+  padding: 0 8px;
+  color: var(--tab-ink);
+  font-size: 12px;
+}
+
 .agentButton {
   width: 36px;
   height: 32px;
@@ -903,10 +994,6 @@ dd {
 .agentButton:focus-visible {
   border-color: rgba(20, 184, 166, 0.56);
   background: var(--accent-soft);
-}
-
-.agentButton.unavailable {
-  opacity: 0.42;
 }
 
 .agentLogo {
@@ -1264,6 +1351,15 @@ dd {
   outline-offset: 2px;
 }
 
+.symbolNode.dimmed {
+  opacity: 0.24;
+  filter: grayscale(0.55);
+}
+
+.symbolNode.branchHighlighted {
+  box-shadow: 0 18px 44px rgba(15, 118, 110, 0.2), 0 0 0 1px rgba(20, 184, 166, 0.36);
+}
+
 .nodeTopline,
 .nodeMetrics {
   display: flex;
@@ -1307,12 +1403,29 @@ dd {
   margin-top: 11px;
 }
 
-.nodeMetrics span {
+.nodeMetrics span,
+.nodeMetricButton {
   display: grid;
   min-width: 0;
   gap: 2px;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+
+.nodeMetricButton {
+  height: auto;
+  border: 0;
+  border-radius: 6px;
+  padding: 0;
+  background: transparent;
+  color: var(--heading);
+  text-align: left;
+}
+
+.nodeMetricButton:hover,
+.nodeMetricButton:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
 }
 
 .nodeMetrics b {
@@ -1359,6 +1472,12 @@ dd {
 .callEdge.external_call path {
   stroke: #d97706;
   stroke-dasharray: 3 5;
+}
+
+.callEdge.dimmed path,
+.callEdge.dimmed .react-flow__edge-text,
+.callEdge.dimmed .react-flow__edge-textbg {
+  opacity: 0.2;
 }
 
 .react-flow__edge-textbg {

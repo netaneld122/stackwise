@@ -24,7 +24,21 @@ import {
   type Node as FlowNode,
   type NodeProps,
 } from "@xyflow/react";
-import { GitBranch, Grid2X2, Moon, Pin, Redo2, RotateCcw, Search, Sun, Undo2 } from "lucide-react";
+import {
+  Copy,
+  FileJson,
+  FileText,
+  FolderOpen,
+  GitBranch,
+  Grid2X2,
+  Moon,
+  Pin,
+  Redo2,
+  RotateCcw,
+  Search,
+  Sun,
+  Undo2,
+} from "lucide-react";
 import { siClaude, siCursor } from "simple-icons";
 import {
   buildFocusedCallGraph,
@@ -35,7 +49,7 @@ import {
 import {
   agentLaunchErrorMessage,
   agentStatusDisplayMessage,
-  isAgentUnavailableStatus,
+  type AgentBriefResponse,
   type AgentHandoffResponse,
   type AgentHandoffStatus,
   type AgentId,
@@ -76,6 +90,7 @@ type GraphNavigationState = {
   edgeKinds: EdgeKind[];
   mode: GraphNavigationMode;
   actionSymbolId: number | null;
+  highlightBranchRootId: number | null;
 };
 type GraphNavigationHistory = {
   past: GraphNavigationState[];
@@ -92,6 +107,7 @@ const defaultGraphNavigationState: GraphNavigationState = {
   edgeKinds: defaultGraphEdgeKinds,
   mode: "default",
   actionSymbolId: null,
+  highlightBranchRootId: null,
 };
 
 const graphLayoutOptions: Array<{ value: GraphLayout; label: string }> = [
@@ -118,7 +134,7 @@ const agentTargets: Array<{ id: AgentId; label: string; icon: AgentIcon }> = [
 ];
 
 export function App() {
-  const { report, setReport, query, setQuery, metric, setMetric, confidence, setConfidence } =
+  const { report, setReport, setReportPath } =
     useStackwiseStore();
   const [error, setError] = useState<string | null>(null);
 
@@ -130,7 +146,14 @@ export function App() {
       })
       .then(setReport)
       .catch((cause) => setError(String(cause)));
-  }, [setReport]);
+    fetch("/api/report-info")
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json() as Promise<{ path: string }>;
+      })
+      .then((payload) => setReportPath(payload.path))
+      .catch(() => setReportPath(null));
+  }, [setReport, setReportPath]);
 
   if (error) return <Shell status="Failed to load report"><div className="empty">{error}</div></Shell>;
   if (!report) return <Shell status="Loading"><div className="empty">Loading report...</div></Shell>;
@@ -150,8 +173,13 @@ function ReportView({ report }: { report: StackwiseReport }) {
     setConfidence,
     selectedId,
     selectedSymbol,
+    reportPath,
+    setReport,
+    setReportPath,
   } =
     useStackwiseStore();
+  const analysisFileInputRef = useRef<HTMLInputElement>(null);
+  const [analysisFileError, setAnalysisFileError] = useState<string | null>(null);
   const moduleTree = useMemo(() => buildModuleTree(report), [report]);
   const [includedModules, setIncludedModules] = useState<Set<string> | null>(() =>
     defaultIncludedModules(report, moduleTree),
@@ -180,7 +208,13 @@ function ReportView({ report }: { report: StackwiseReport }) {
   const graphState = graphHistory.present;
   const { rootId: graphRootId, callerDepth, calleeDepth, layout: graphLayout } = graphState;
   const edgeKinds = useMemo(() => new Set(graphState.edgeKinds), [graphState.edgeKinds]);
-  const status = `${report.artifact.file_name} | ${report.summary.symbol_count} symbols | ${report.summary.known_frame_count} known | ${report.summary.unknown_frame_count} unknown`;
+  const status = (
+    <AnalysisFileStatus
+      reportPath={reportPath}
+      fallbackName={report.artifact.file_name}
+      error={analysisFileError}
+    />
+  );
   const primaryCrate = primaryCrateName(report);
   const defaultGraphRoot = useMemo(
     () => chooseDefaultRoot(report, symbols, null),
@@ -214,6 +248,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
           rootId: defaultGraphRoot,
           mode: "default",
           actionSymbolId: null,
+          highlightBranchRootId: null,
         },
       }));
     }
@@ -234,6 +269,10 @@ function ReportView({ report }: { report: StackwiseReport }) {
   const setCallerDepth = (callerDepth: number) => commitGraphNavigation((current) => ({ ...current, callerDepth }));
   const setCalleeDepth = (calleeDepth: number) => commitGraphNavigation((current) => ({ ...current, calleeDepth }));
   const setGraphLayout = (layout: GraphLayout) => commitGraphNavigation((current) => ({ ...current, layout }));
+  const toggleWorstBranchHighlight = (symbolId: number) => commitGraphNavigation((current) => ({
+    ...current,
+    highlightBranchRootId: current.highlightBranchRootId === symbolId ? null : symbolId,
+  }));
   const undoGraphNavigation = () => setGraphHistory(undoGraphHistory);
   const redoGraphNavigation = () => setGraphHistory(redoGraphHistory);
   const pivotToSymbol = (symbolId: number) => commitGraphNavigation((current) => ({
@@ -241,6 +280,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
     rootId: symbolId,
     mode: "focus",
     actionSymbolId: symbolId,
+    highlightBranchRootId: null,
   }));
   const showCallersForSymbol = (symbolId: number) => {
     commitGraphNavigation((current) => ({
@@ -251,20 +291,71 @@ function ReportView({ report }: { report: StackwiseReport }) {
       layout: "TB",
       mode: "callers",
       actionSymbolId: symbolId,
+      highlightBranchRootId: null,
     }));
+  };
+
+  const openAnalysisFilePicker = () => {
+    setAnalysisFileError(null);
+    analysisFileInputRef.current?.click();
+  };
+
+  const loadAnalysisFile = async (file: File | null) => {
+    if (!file) return;
+    setAnalysisFileError(null);
+    try {
+      const text = await file.text();
+      const nextReport = JSON.parse(text) as StackwiseReport;
+      if (!nextReport?.symbols || !nextReport?.edges || !nextReport?.summary) {
+        throw new Error("The selected file is not a Stackwise report.");
+      }
+      let nextPath = file.name;
+      try {
+        const response = await fetch(`/api/load-report?file_name=${encodeURIComponent(file.name)}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: text,
+        });
+        if (response.ok) {
+          const payload = (await response.json()) as { path: string };
+          nextPath = payload.path || nextPath;
+        }
+      } catch {
+        // Static-file mode can still inspect the report, but source/agent actions need a live server.
+      }
+      setReport(nextReport);
+      setReportPath(nextPath);
+      setGraphHistory(initialGraphHistory());
+    } catch (cause) {
+      setAnalysisFileError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      if (analysisFileInputRef.current) analysisFileInputRef.current.value = "";
+    }
   };
 
   return (
     <Shell
       status={status}
       toolbar={
-        <div className="summaryChips">
-          {primaryCrate ? <span className="chip appChip">App <strong>{primaryCrate}</strong></span> : null}
-          <span className="chip">Symbols <strong>{report.summary.symbol_count.toLocaleString()}</strong></span>
-          <span className="chip">Known <strong>{report.summary.known_frame_count.toLocaleString()}</strong></span>
-          <span className="chip">Unknown <strong>{report.summary.unknown_frame_count.toLocaleString()}</strong></span>
-          <span className="chip">Confidence <strong>{report.summary.confidence}</strong></span>
-        </div>
+        <>
+          <button className="openAnalysisButton" type="button" onClick={openAnalysisFilePicker}>
+            <FolderOpen size={15} /> Open analysis file
+          </button>
+          <input
+            ref={analysisFileInputRef}
+            className="hiddenFileInput"
+            type="file"
+            accept=".json,application/json"
+            onChange={(event) => void loadAnalysisFile(event.target.files?.[0] ?? null)}
+          />
+          <div className="summaryChips">
+            {primaryCrate ? <span className="chip appChip">App <strong>{primaryCrate}</strong></span> : null}
+            <span className="chip">Symbols <strong>{report.summary.symbol_count.toLocaleString()}</strong></span>
+            <span className="chip">Known <strong>{report.summary.known_frame_count.toLocaleString()}</strong></span>
+            <span className="chip">Unknown <strong>{report.summary.unknown_frame_count.toLocaleString()}</strong></span>
+            <span className="chip">Confidence <strong>{report.summary.confidence}</strong></span>
+          </div>
+        </>
       }
       left={
         <ModuleList
@@ -334,8 +425,10 @@ function ReportView({ report }: { report: StackwiseReport }) {
               edgeKinds={edgeKinds}
               layout={graphLayout}
               selectedId={selectedId}
+              highlightedWorstBranchRootId={graphState.highlightBranchRootId}
               onPivotSymbol={pivotToSymbol}
               onShowCallers={showCallersForSymbol}
+              onToggleWorstBranch={toggleWorstBranchHighlight}
             />
           )}
         </div>
@@ -516,6 +609,7 @@ function sameGraphNavigationState(left: GraphNavigationState, right: GraphNaviga
     left.layout === right.layout &&
     left.mode === right.mode &&
     left.actionSymbolId === right.actionSymbolId &&
+    left.highlightBranchRootId === right.highlightBranchRootId &&
     left.edgeKinds.length === right.edgeKinds.length &&
     left.edgeKinds.every((kind, index) => kind === right.edgeKinds[index])
   );
@@ -536,7 +630,7 @@ function Shell({
   toolbar?: ReactNode;
   left?: ReactNode;
   right?: ReactNode;
-  status: string;
+  status: ReactNode;
 }) {
   const [paneSizes, setPaneSizes] = useState({ left: 320, right: 520 });
   const [theme, toggleTheme] = useThemePreference();
@@ -601,6 +695,46 @@ function Shell({
       />
       <section>{right}</section>
       <footer>{status}</footer>
+    </div>
+  );
+}
+
+function AnalysisFileStatus({
+  reportPath,
+  fallbackName,
+  error,
+}: {
+  reportPath: string | null;
+  fallbackName: string;
+  error: string | null;
+}) {
+  const [openError, setOpenError] = useState<string | null>(null);
+  const displayPath = reportPath || fallbackName;
+
+  const openAnalysisFile = async () => {
+    setOpenError(null);
+    try {
+      const response = await fetch("/api/open-analysis-file", { method: "POST" });
+      if (!response.ok) throw new Error(await response.text() || `HTTP ${response.status}`);
+    } catch (cause) {
+      setOpenError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
+  return (
+    <div className="analysisStatus">
+      <FileJson size={14} />
+      <span>Analysis JSON</span>
+      <button
+        className="analysisPathButton"
+        type="button"
+        title={`Open analysis JSON: ${displayPath}`}
+        onClick={openAnalysisFile}
+      >
+        {displayPath}
+      </button>
+      {error ? <span className="statusError">{error}</span> : null}
+      {openError ? <span className="statusError">{openError}</span> : null}
     </div>
   );
 }
@@ -839,16 +973,21 @@ function Details({ symbol }: { symbol: SymbolReport | null }) {
 
 function AgentActions({ symbol }: { symbol: SymbolReport }) {
   const [busyAgent, setBusyAgent] = useState<AgentId | null>(null);
+  const [briefBusy, setBriefBusy] = useState(false);
+  const [brief, setBrief] = useState<AgentBriefResponse | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [unavailableAgents, setUnavailableAgents] = useState<Set<AgentId>>(() => new Set());
+  const [copied, setCopied] = useState(false);
   const pollGenerationRef = useRef(0);
 
   useEffect(() => {
     pollGenerationRef.current += 1;
     setBusyAgent(null);
+    setBriefBusy(false);
+    setBrief(null);
     setStatus(null);
     setError(null);
+    setCopied(false);
   }, [symbol.id]);
 
   const followAgentStatus = async (
@@ -868,9 +1007,6 @@ function AgentActions({ symbol }: { symbol: SymbolReport }) {
       if (!isCurrent()) return;
 
       if (launchStatus?.state === "failed") {
-        if (isAgentUnavailableStatus(agent, launchStatus)) {
-          setUnavailableAgents((current) => new Set(current).add(agent));
-        }
         setStatus(null);
         setError(agentStatusDisplayMessage(launchStatus));
       } else if (launchStatus?.state === "succeeded") {
@@ -884,7 +1020,45 @@ function AgentActions({ symbol }: { symbol: SymbolReport }) {
     }
   };
 
+  const generateMarkdown = async () => {
+    const generation = pollGenerationRef.current + 1;
+    pollGenerationRef.current = generation;
+    setBriefBusy(true);
+    setBrief(null);
+    setCopied(false);
+    setStatus("Generating Stackwise optimization markdown...");
+    setError(null);
+    try {
+      const response = await fetch("/api/agent-brief", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ symbol_id: symbol.id }),
+      });
+      const text = await response.text();
+      let payload: AgentBriefResponse | null = null;
+      try {
+        payload = JSON.parse(text) as AgentBriefResponse;
+      } catch {
+        payload = null;
+      }
+      if (!response.ok || !payload) {
+        throw new Error(payload?.message ?? (text || `HTTP ${response.status}`));
+      }
+      if (pollGenerationRef.current !== generation) return;
+      setBrief(payload);
+      setStatus(payload.message);
+    } catch (cause) {
+      if (pollGenerationRef.current === generation) {
+        setStatus(null);
+        setError(agentLaunchErrorMessage(cause));
+      }
+    } finally {
+      if (pollGenerationRef.current === generation) setBriefBusy(false);
+    }
+  };
+
   const launchAgent = async (agent: AgentId) => {
+    if (!brief) return;
     const generation = pollGenerationRef.current + 1;
     pollGenerationRef.current = generation;
     setBusyAgent(agent);
@@ -894,7 +1068,7 @@ function AgentActions({ symbol }: { symbol: SymbolReport }) {
       const response = await fetch("/api/agent-handoff", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ agent, symbol_id: symbol.id }),
+        body: JSON.stringify({ agent, symbol_id: symbol.id, brief_id: brief.brief_id }),
       });
       const text = await response.text();
       let payload: AgentHandoffResponse | null = null;
@@ -918,34 +1092,62 @@ function AgentActions({ symbol }: { symbol: SymbolReport }) {
     }
   };
 
+  const copyPromptPath = async () => {
+    if (!brief) return;
+    try {
+      await navigator.clipboard.writeText(brief.prompt_path);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
   return (
     <div className="agentActions" aria-label="AI stack optimization actions">
       <div className="agentActionsHeader">
         <span>Optimize with AI</span>
-        {busyAgent ? <em>Launching...</em> : null}
+        {briefBusy ? <em>Generating...</em> : busyAgent ? <em>Launching...</em> : null}
       </div>
-      <div className="agentButtons">
-        {agentTargets.map((agent) => {
-          const unavailable = unavailableAgents.has(agent.id);
-          return (
+      {!brief ? (
+        <button
+          className="generateMarkdownButton"
+          type="button"
+          disabled={briefBusy || busyAgent !== null}
+          onClick={() => void generateMarkdown()}
+        >
+          <FileText size={15} /> Generate markdown
+        </button>
+      ) : (
+        <>
+          <div className="briefPathRow">
+            <code title={brief.prompt_path}>{brief.prompt_path}</code>
             <button
-              className={`agentButton ${agent.id}${unavailable ? " unavailable" : ""}`}
-              disabled={busyAgent !== null || unavailable}
-              key={agent.id}
               type="button"
-              aria-label={`Send symbol to ${agent.label}`}
-              title={
-                unavailable
-                  ? `${agent.label} is unavailable in this page session. Try another agent or reload after fixing access.`
-                  : `Send ${symbol.demangled} to ${agent.label} with Stackwise context`
-              }
-              onClick={() => launchAgent(agent.id)}
+              className="copyBriefButton"
+              title="Copy markdown path"
+              onClick={() => void copyPromptPath()}
             >
-              <AgentLogo agent={agent} />
+              <Copy size={14} /> {copied ? "Copied" : "Copy"}
             </button>
-          );
-        })}
-      </div>
+          </div>
+          <div className="agentButtons">
+            {agentTargets.map((agent) => (
+              <button
+                className={`agentButton ${agent.id}`}
+                disabled={busyAgent !== null || briefBusy}
+                key={agent.id}
+                type="button"
+                aria-label={`Send generated markdown to ${agent.label}`}
+                title={`Launch ${agent.label} with ${brief.prompt_path}`}
+                onClick={() => launchAgent(agent.id)}
+              >
+                <AgentLogo agent={agent} />
+              </button>
+            ))}
+          </div>
+        </>
+      )}
       {status ? <p className="agentStatus success" title={status}>{status}</p> : null}
       {error ? <p className="agentStatus error">{error}</p> : null}
     </div>
@@ -1512,6 +1714,9 @@ type FlowData = {
   color: string;
   layout: GraphLayout;
   selected: boolean;
+  dimmed: boolean;
+  branchHighlighted: boolean;
+  onToggleWorstBranch: (symbolId: number) => void;
 };
 type StackwiseFlowNode = FlowNode<FlowData, "stackwise">;
 
@@ -1529,8 +1734,10 @@ function CallGraphView({
   edgeKinds,
   layout,
   selectedId,
+  highlightedWorstBranchRootId,
   onPivotSymbol,
   onShowCallers,
+  onToggleWorstBranch,
 }: {
   report: StackwiseReport;
   symbols: SymbolReport[];
@@ -1540,8 +1747,10 @@ function CallGraphView({
   edgeKinds: ReadonlySet<EdgeKind>;
   layout: GraphLayout;
   selectedId: number | null;
+  highlightedWorstBranchRootId: number | null;
   onPivotSymbol: (symbolId: number) => void;
   onShowCallers: (symbolId: number) => void;
+  onToggleWorstBranch: (symbolId: number) => void;
 }) {
   const { setSelectedId } = useStackwiseStore();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; symbol: SymbolReport } | null>(null);
@@ -1557,8 +1766,8 @@ function CallGraphView({
     [calleeDepth, callerDepth, edgeKinds, report, rootId, symbols],
   );
   const { nodes, edges } = useMemo(
-    () => layoutFlowGraph(focused.nodes, focused.edges, report, selectedId, layout),
-    [focused, layout, report, selectedId],
+    () => layoutFlowGraph(focused.nodes, focused.edges, report, selectedId, layout, highlightedWorstBranchRootId, onToggleWorstBranch),
+    [focused, highlightedWorstBranchRootId, layout, onToggleWorstBranch, report, selectedId],
   );
   const fitKey = useMemo(
     () => `${focused.rootId}:${layout}:${callerDepth}:${calleeDepth}:${[...edgeKinds].sort().join(",")}:${symbols.length}`,
@@ -1709,7 +1918,7 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
   const symbol = node.symbol;
   return (
     <div
-      className={`callNode symbolNode ${node.relation}${data.selected ? " selected" : ""}`}
+      className={`callNode symbolNode ${node.relation}${data.selected ? " selected" : ""}${data.dimmed ? " dimmed" : ""}${data.branchHighlighted ? " branchHighlighted" : ""}`}
       style={{ "--node-color": data.color } as CSSProperties}
       title={symbol.demangled}
     >
@@ -1723,7 +1932,17 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
       <div className="nodeMetrics">
         <span><b>Own</b>{formatBytes(symbol.own_frame.bytes)}</span>
         <span><b>Cumulative</b>{formatBytes(node.cumulativeStackBytes)}</span>
-        <span><b>Worst branch</b>{formatBytes(node.visibleWorstStackBytes)}</span>
+        <button
+          className="nodeMetricButton"
+          type="button"
+          title="Highlight this node's worst visible stack branch"
+          onClick={(event) => {
+            event.stopPropagation();
+            data.onToggleWorstBranch(symbol.id);
+          }}
+        >
+          <b>Worst branch</b>{formatBytes(node.visibleWorstStackBytes)}
+        </button>
       </div>
     </div>
   );
@@ -1735,6 +1954,8 @@ function layoutFlowGraph(
   report: StackwiseReport,
   selectedId: number | null,
   layout: GraphLayout,
+  highlightedWorstBranchRootId: number | null,
+  onToggleWorstBranch: (symbolId: number) => void,
 ): { nodes: StackwiseFlowNode[]; edges: FlowEdge[] } {
   const graph = new dagre.graphlib.Graph();
   graph.setDefaultEdgeLabel(() => ({}));
@@ -1748,6 +1969,20 @@ function layoutFlowGraph(
   }
   for (const edge of graphEdges) graph.setEdge(edge.source, edge.target);
   dagre.layout(graph);
+
+  const highlightedBranchIds = highlightedWorstBranchRootId == null
+    ? null
+    : graphNodes.find(
+        (node): node is Extract<GraphNode, { symbol: SymbolReport }> =>
+          "symbol" in node && node.symbol.id === highlightedWorstBranchRootId,
+      )?.visibleWorstBranchIds ?? null;
+  const highlightedBranchSet = highlightedBranchIds ? new Set(highlightedBranchIds) : null;
+  const highlightedEdgePairs = new Set<string>();
+  if (highlightedBranchIds) {
+    for (let index = 0; index < highlightedBranchIds.length - 1; index += 1) {
+      highlightedEdgePairs.add(`${symbolNodeId(highlightedBranchIds[index])}->${symbolNodeId(highlightedBranchIds[index + 1])}`);
+    }
+  }
 
   const nodes = graphNodes.map<StackwiseFlowNode>((graphNode) => {
     const point = graph.node(graphNode.id) as { x: number; y: number } | undefined;
@@ -1768,6 +2003,9 @@ function layoutFlowGraph(
         color: symbol ? groupColor(symbol, report) : "#64748b",
         layout,
         selected: symbol?.id === selectedId,
+        dimmed: highlightedBranchSet != null && (symbol == null || !highlightedBranchSet.has(symbol.id)),
+        branchHighlighted: symbol != null && highlightedWorstBranchRootId === symbol.id,
+        onToggleWorstBranch,
       },
       selected: symbol?.id === selectedId,
       draggable: false,
@@ -1781,7 +2019,7 @@ function layoutFlowGraph(
     type: "smoothstep",
     label: graphEdgeLabel(edge),
     markerEnd: { type: MarkerType.ArrowClosed },
-    className: `callEdge ${edge.kind}`,
+    className: `callEdge ${edge.kind}${highlightedEdgePairs.size > 0 && !highlightedEdgePairs.has(`${edge.source}->${edge.target}`) ? " dimmed" : ""}`,
   }));
 
   return { nodes, edges };
@@ -1915,13 +2153,19 @@ function createModuleNode(name: string, path: string, depth: number): ModuleNode
 
 function modulePartsForGroup(groupName: string, symbolIds: number[], report: StackwiseReport): string[] {
   const fromGroup = groupName.split("::").map((part) => part.trim()).filter(Boolean);
+  if (fromGroup.some(isMsvcCrtSymbolName)) return ["MSVC CRT startup"];
   if (fromGroup.length > 0) return fromGroup;
 
   const firstSymbol = report.symbols[symbolIds[0]];
+  if (firstSymbol && isMsvcCrtSymbolName(firstSymbol.demangled)) return ["MSVC CRT startup"];
   const fromSymbol = firstSymbol?.module_path.map((part) => part.trim()).filter(Boolean) ?? [];
   if (fromSymbol.length) return fromSymbol;
   const crate = firstSymbol ? symbolCrate(firstSymbol) : null;
   return [crate ?? "unknown"];
+}
+
+function isMsvcCrtSymbolName(name: string): boolean {
+  return /^_*scrt(?:_|$)/i.test(name) || /^_*crt(?:_|$)/i.test(name);
 }
 
 function finalizeModuleNode(node: ModuleNode, report: StackwiseReport, allKeys: string[]) {

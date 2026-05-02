@@ -105,8 +105,11 @@ describe("call graph helpers", () => {
     expect(unknown && "cumulativeStackBytes" in unknown ? unknown.cumulativeStackBytes : null).toBe(16);
     expect(leaf && "cumulativeStackBytes" in leaf ? leaf.cumulativeStackBytes : null).toBe(80);
     expect(main && "visibleWorstStackBytes" in main ? main.visibleWorstStackBytes : null).toBe(80);
+    expect(main && "visibleWorstBranchIds" in main ? main.visibleWorstBranchIds : null).toEqual([0, 1, 2]);
     expect(unknown && "visibleWorstStackBytes" in unknown ? unknown.visibleWorstStackBytes : null).toBe(64);
+    expect(unknown && "visibleWorstBranchIds" in unknown ? unknown.visibleWorstBranchIds : null).toEqual([1, 2]);
     expect(leaf && "visibleWorstStackBytes" in leaf ? leaf.visibleWorstStackBytes : null).toBe(64);
+    expect(leaf && "visibleWorstBranchIds" in leaf ? leaf.visibleWorstBranchIds : null).toEqual([2]);
     expect(directEdge?.addedStackBytes).toBe(0);
     expect(tailEdge?.addedStackBytes).toBe(64);
   });
@@ -133,6 +136,7 @@ describe("call graph helpers", () => {
     const tailEdge = graph.edges.find((edge) => edge.kind === "tail_call");
     expect(leaf && "cumulativeStackBytes" in leaf ? leaf.cumulativeStackBytes : null).toBe(80);
     expect(main && "visibleWorstStackBytes" in main ? main.visibleWorstStackBytes : null).toBe(80);
+    expect(main && "visibleWorstBranchIds" in main ? main.visibleWorstBranchIds : null).toEqual([0, 1, 2]);
     expect(parent && "visibleWorstStackBytes" in parent ? parent.visibleWorstStackBytes : null).toBe(64);
     expect(leaf && "visibleWorstStackBytes" in leaf ? leaf.visibleWorstStackBytes : null).toBe(64);
     expect(tailEdge?.addedStackBytes).toBe(32);
