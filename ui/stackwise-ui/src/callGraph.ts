@@ -1,4 +1,11 @@
-import type { EdgeKind, EdgeReport, StackwiseReport, SymbolReport } from "./report";
+import {
+  primaryCrateName,
+  symbolCrate,
+  type EdgeKind,
+  type EdgeReport,
+  type StackwiseReport,
+  type SymbolReport,
+} from "./report";
 
 export type GraphRelation = "caller" | "root" | "callee";
 export type GraphStackStatus = "known" | "unknown";
@@ -65,6 +72,10 @@ export function chooseDefaultRoot(
   selectedId: number | null,
 ): number | null {
   const visibleIds = new Set(visibleSymbols.map((symbol) => symbol.id));
+
+  const entryPoint = choosePrimaryEntryPoint(report);
+  if (entryPoint != null) return entryPoint;
+
   if (selectedId != null && visibleIds.has(selectedId)) return selectedId;
 
   const summaryWorst = report.summary.max_worst_path?.symbol_id;
@@ -88,12 +99,14 @@ export function buildFocusedCallGraph(
   visibleSymbols: SymbolReport[],
   options: GraphOptions,
 ): FocusedCallGraph {
+  const allSymbolsById = new Map(report.symbols.map((symbol) => [symbol.id, symbol]));
   const visibleIds = new Set(visibleSymbols.map((symbol) => symbol.id));
-  const index = buildGraphIndex(report, visibleIds);
-  const rootId = options.rootId != null && visibleIds.has(options.rootId)
+  const rootId = options.rootId != null && allSymbolsById.has(options.rootId)
     ? options.rootId
     : chooseDefaultRoot(report, visibleSymbols, null);
   if (rootId == null) return { rootId: null, nodes: [], edges: [], hiddenNodeCount: 0 };
+  visibleIds.add(rootId);
+  const index = buildGraphIndex(report, visibleIds, allSymbolsById);
 
   const nodeIds = new Set<number>([rootId]);
   const relationById = new Map<number, GraphRelation>([[rootId, "root"]]);
@@ -178,8 +191,34 @@ export function buildFocusedCallGraph(
   };
 }
 
-function buildGraphIndex(report: StackwiseReport, visibleIds: ReadonlySet<number>): GraphIndex {
-  const byId = new Map(report.symbols.map((symbol) => [symbol.id, symbol]));
+function choosePrimaryEntryPoint(report: StackwiseReport): number | null {
+  const primary = primaryCrateName(report);
+  if (primary) {
+    const primaryMain = report.symbols.find((symbol) => {
+      const crate = symbolCrate(symbol);
+      return crate === primary && isMainSymbol(symbol.demangled);
+    });
+    if (primaryMain) return primaryMain.id;
+  }
+
+  const rustMain = report.symbols.find((symbol) => {
+    const crate = symbolCrate(symbol);
+    return crate !== "main" && isMainSymbol(symbol.demangled);
+  });
+  if (rustMain) return rustMain.id;
+
+  return report.symbols.find((symbol) => symbol.demangled === "main")?.id ?? null;
+}
+
+function isMainSymbol(demangled: string): boolean {
+  return demangled === "main" || demangled.endsWith("::main");
+}
+
+function buildGraphIndex(
+  report: StackwiseReport,
+  visibleIds: ReadonlySet<number>,
+  byId = new Map(report.symbols.map((symbol) => [symbol.id, symbol])),
+): GraphIndex {
   const incoming = new Map<number, EdgeReport[]>();
   const outgoing = new Map<number, EdgeReport[]>();
 

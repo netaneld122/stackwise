@@ -5,12 +5,13 @@ import type { EdgeKind, EdgeReport, StackwiseReport, SymbolReport } from "./repo
 const allEdges = new Set<EdgeKind>(["direct_call", "tail_call", "indirect_call", "external_call"]);
 
 describe("call graph helpers", () => {
-  it("chooses the selected visible symbol before summary defaults", () => {
+  it("keeps the primary crate entrypoint ahead of selected and summary defaults", () => {
     const report = reportWith([symbol(0, "demo::main", 16), symbol(1, "demo::heavy", 64)], []);
     report.summary.max_worst_path = { symbol_id: 1, bytes: 64, demangled: "demo::heavy" };
 
     expect(chooseDefaultRoot(report, report.symbols, 0)).toBe(0);
-    expect(chooseDefaultRoot(report, report.symbols, null)).toBe(1);
+    expect(chooseDefaultRoot(report, report.symbols, 1)).toBe(0);
+    expect(chooseDefaultRoot(report, [report.symbols[1]], null)).toBe(0);
   });
 
   it("builds a focused caller and callee slice", () => {
@@ -27,6 +28,27 @@ describe("call graph helpers", () => {
 
     expect(graph.nodes.map((node) => node.id).sort()).toEqual(["s:0", "s:1", "s:2"]);
     expect(graph.edges).toHaveLength(2);
+  });
+
+  it("pins the requested root even when module filters hide it", () => {
+    const symbols = [
+      symbol(0, "demo::main", 16),
+      symbol(1, "demo::leaf", 32),
+      symbol(2, "std::helper", 8, "std"),
+    ];
+    const report = reportWith(symbols, [edge(0, 1, "direct_call"), edge(0, 2, "direct_call")]);
+
+    const graph = buildFocusedCallGraph(report, [symbols[2]], {
+      rootId: 0,
+      callerDepth: 0,
+      calleeDepth: 1,
+      maxNodes: 20,
+      edgeKinds: allEdges,
+    });
+
+    expect(graph.rootId).toBe(0);
+    expect(graph.nodes.map((node) => node.id).sort()).toEqual(["s:0", "s:2"]);
+    expect(graph.edges.map((graphEdge) => `${graphEdge.source}->${graphEdge.target}`)).toEqual(["s:0->s:2"]);
   });
 
   it("keeps tail-call cumulative stack from double-counting frames", () => {
@@ -108,13 +130,13 @@ describe("call graph helpers", () => {
   });
 });
 
-function symbol(id: number, demangled: string, own: number | null): SymbolReport {
+function symbol(id: number, demangled: string, own: number | null, crateName = "demo"): SymbolReport {
   return {
     id,
     name: demangled,
     demangled,
-    crate_name: "demo",
-    module_path: ["demo"],
+    crate_name: crateName,
+    module_path: [crateName],
     address: id * 16,
     size_bytes: 12,
     own_frame: {

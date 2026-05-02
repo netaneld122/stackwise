@@ -176,8 +176,8 @@ function ReportView({ report }: { report: StackwiseReport }) {
   const status = `${report.artifact.file_name} | ${report.summary.symbol_count} symbols | ${report.summary.known_frame_count} known | ${report.summary.unknown_frame_count} unknown`;
   const primaryCrate = primaryCrateName(report);
   const defaultGraphRoot = useMemo(
-    () => chooseDefaultRoot(report, symbols, selected?.id ?? null),
-    [report, symbols, selected?.id],
+    () => chooseDefaultRoot(report, symbols, null),
+    [report, symbols],
   );
   const graphRootIsVisible = graphRootId == null || visibleSymbolIds.has(graphRootId);
   const effectiveGraphRoot = graphRootId != null && graphRootIsVisible ? graphRootId : defaultGraphRoot;
@@ -194,7 +194,12 @@ function ReportView({ report }: { report: StackwiseReport }) {
   }, [report]);
 
   useEffect(() => {
-    if (viewMode === "call_graph" && graphState.rootId == null && defaultGraphRoot != null) {
+    if (
+      viewMode === "call_graph" &&
+      graphState.mode === "default" &&
+      defaultGraphRoot != null &&
+      graphState.rootId !== defaultGraphRoot
+    ) {
       setGraphHistory((current) => ({
         ...current,
         present: {
@@ -205,7 +210,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
         },
       }));
     }
-  }, [defaultGraphRoot, graphState.rootId, viewMode]);
+  }, [defaultGraphRoot, graphState.mode, graphState.rootId, viewMode]);
 
   const commitGraphNavigation = (update: (current: GraphNavigationState) => GraphNavigationState) => {
     setGraphHistory((current) => pushGraphNavigation(current, update(current.present)));
