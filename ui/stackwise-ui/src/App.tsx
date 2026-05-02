@@ -2194,7 +2194,8 @@ function modulePartsForGroup(groupName: string, symbolIds: number[], report: Sta
 }
 
 function isMsvcCrtSymbolName(name: string): boolean {
-  return /^_*scrt(?:_|$)/i.test(name) || /^_*crt(?:_|$)/i.test(name);
+  const normalized = name.trim().replace(/^[^A-Za-z_]+/, "");
+  return /^_*scrt(?:_|$)/i.test(normalized) || /^_*crt(?:_|$)/i.test(normalized);
 }
 
 function finalizeModuleNode(node: ModuleNode, report: StackwiseReport, allKeys: string[]) {
