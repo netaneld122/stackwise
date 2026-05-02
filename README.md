@@ -18,6 +18,20 @@ cargo stackwise --release --open
 This builds your current Cargo project, writes a JSON report under `target/stackwise/`, and opens an interactive treemap UI.
 Use `--serve` instead of `--open` when you want Stackwise to print a local URL without opening your browser.
 
+## Screenshots
+
+**Stack treemap.** Find the frames that matter, grouped by module, with source and disassembly beside the selected symbol.
+
+![Stackwise stack treemap](docs/images/stackwise-treemap.png)
+
+**Call graph.** Follow stack growth from caller to callee and see cumulative stack on every branch.
+
+![Stackwise call graph](docs/images/stackwise-call-graph.png)
+
+**Source reader.** Jump from symbols into a focused, syntax-highlighted full-file view.
+
+![Stackwise source reader](docs/images/stackwise-source-reader.png)
+
 ## What You Get
 
 - **Drop-in analysis** for existing Rust projects.
