@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -6,6 +7,7 @@ import {
   useState,
   type CSSProperties,
   type Dispatch,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type SetStateAction,
@@ -21,6 +23,7 @@ import {
   Position,
   ReactFlow,
   type Edge as FlowEdge,
+  type FitViewOptions,
   type Node as FlowNode,
   type NodeProps,
 } from "@xyflow/react";
@@ -1801,6 +1804,7 @@ type FlowData = {
   selected: boolean;
   dimmed: boolean;
   branchHighlighted: boolean;
+  onSymbolContextMenu?: (event: ReactMouseEvent<HTMLElement>, graphNode: GraphNode) => void;
 };
 type StackwiseFlowNode = FlowNode<FlowData, "stackwise">;
 
@@ -1859,11 +1863,44 @@ function CallGraphView({
     () => layoutFlowGraph(visibleGraph.nodes, visibleGraph.edges, report, selectedId, layout, highlightedWorstBranchRootId),
     [highlightedWorstBranchRootId, layout, report, selectedId, visibleGraph],
   );
+  const openSymbolContextMenu = useCallback((event: ReactMouseEvent<HTMLElement>, graphNode: GraphNode) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!("symbol" in graphNode)) return;
+    const nodeElement =
+      event.currentTarget.closest<HTMLElement>(".react-flow__node") ??
+      (event.target instanceof Element ? event.target.closest<HTMLElement>(".react-flow__node") : null) ??
+      event.currentTarget;
+    const position = positionGraphContextMenu(nodeElement.getBoundingClientRect());
+    setSelectedId(graphNode.symbol.id);
+    setContextMenu({
+      ...position,
+      symbol: graphNode.symbol,
+    });
+  }, [setSelectedId]);
+  const interactiveNodes = useMemo<StackwiseFlowNode[]>(
+    () => nodes.map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        onSymbolContextMenu: openSymbolContextMenu,
+      },
+    })),
+    [nodes, openSymbolContextMenu],
+  );
   const fitKey = useMemo(
     () => `${focused.rootId}:${highlightedWorstBranchRootId ?? "all"}:${layout}:${callerDepth}:${calleeDepth}:${nodeLimit}:${[...edgeKinds].sort().join(",")}:${symbols.length}`,
     [calleeDepth, callerDepth, edgeKinds, focused.rootId, highlightedWorstBranchRootId, layout, nodeLimit, symbols.length],
   );
-  const initialFitMinZoom = nodes.length <= 6 ? 0.82 : nodes.length <= 24 ? 0.58 : 0.28;
+  const rootFitViewOptions = useMemo<FitViewOptions<StackwiseFlowNode>>(
+    () => ({
+      nodes: focused.rootId == null ? undefined : [{ id: symbolNodeId(focused.rootId) }],
+      padding: 1.2,
+      minZoom: 1.04,
+      maxZoom: 1.18,
+    }),
+    [focused.rootId],
+  );
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -1898,11 +1935,11 @@ function CallGraphView({
       ) : null}
       <ReactFlow
         key={fitKey}
-        nodes={nodes}
+        nodes={interactiveNodes}
         edges={edges}
         nodeTypes={nodeTypes}
         fitView
-        fitViewOptions={{ padding: 0.14, minZoom: initialFitMinZoom, maxZoom: 1.04 }}
+        fitViewOptions={rootFitViewOptions}
         minZoom={0.2}
         maxZoom={1.6}
         nodesDraggable={false}
@@ -2023,6 +2060,7 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
       className={`callNode symbolNode ${node.relation}${data.selected ? " selected" : ""}${data.dimmed ? " dimmed" : ""}${data.branchHighlighted ? " branchHighlighted" : ""}`}
       style={{ "--node-color": data.color } as CSSProperties}
       title={symbol.demangled}
+      onContextMenu={(event) => data.onSymbolContextMenu?.(event, node)}
     >
       <Handle type="target" position={handles.target} />
       <Handle type="source" position={handles.source} />

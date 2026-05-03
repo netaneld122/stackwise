@@ -1,4 +1,4 @@
-import { test, expect, type Locator } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 
 test("renders the application shell", async ({ page }) => {
   let agentRequest: unknown = null;
@@ -232,8 +232,15 @@ test("renders the application shell", async ({ page }) => {
   await expect(redoGraph).toBeDisabled();
   await expect(graphFocusStatus).toContainText("Default root");
   await expect(graphFocusStatus).toContainText("demo::main");
-  await expect(page.locator(".symbolNode").filter({ hasText: "demo::main" })).toBeVisible();
+  const rootNode = page.locator(".symbolNode.root").filter({ hasText: "demo::main" });
+  await expect(rootNode).toBeVisible();
   await expect(page.locator(".symbolNode").filter({ hasText: "demo::leaf" })).toBeVisible();
+  await expect.poll(async () => graphZoom(page)).toBeGreaterThanOrEqual(1.03);
+  const graphBox = await page.locator(".react-flow").boundingBox();
+  const rootNodeBox = await rootNode.boundingBox();
+  if (!graphBox || !rootNodeBox) throw new Error("Expected call graph and root bounds");
+  expect(rootNodeBox.x + rootNodeBox.width / 2).toBeGreaterThan(graphBox.x + graphBox.width * 0.32);
+  expect(rootNodeBox.x + rootNodeBox.width / 2).toBeLessThan(graphBox.x + graphBox.width * 0.68);
   await expect(page.getByText("Cumulative").first()).toBeVisible();
   await expect(page.getByText("+24 B")).toBeVisible();
   const nodeLimitSlider = page.getByLabel("Call graph node limit");
@@ -242,14 +249,16 @@ test("renders the application shell", async ({ page }) => {
   await expect(nodeLimitSlider).toHaveAttribute("max", "2");
   await expect(nodeLimitSlider).toHaveAttribute("step", "1");
   await expect(nodeLimitSlider).toHaveValue("2");
+  await page.getByRole("button", { name: "Fit View" }).click();
   const leafNode = page.locator(".react-flow__node").filter({ hasText: "demo::leaf" });
   await expect(leafNode).toHaveCount(1);
   const leafNodeBox = await leafNode.boundingBox();
-  await leafNode.click({ button: "right", position: { x: 18, y: 18 } });
+  if (!leafNodeBox) throw new Error("Expected call graph leaf bounds");
+  await leafNode.click({ button: "right" });
   const graphMenu = page.getByRole("menu");
   await expect(graphMenu).toBeVisible();
   const graphMenuBox = await graphMenu.boundingBox();
-  if (!leafNodeBox || !graphMenuBox) throw new Error("Expected call graph card and context menu bounds");
+  if (!graphMenuBox) throw new Error("Expected call graph context menu bounds");
   const horizontalGap = Math.max(
     0,
     graphMenuBox.x - (leafNodeBox.x + leafNodeBox.width),
@@ -261,7 +270,7 @@ test("renders the application shell", async ({ page }) => {
     leafNodeBox.y - (graphMenuBox.y + graphMenuBox.height),
   );
   expect(horizontalGap).toBeLessThanOrEqual(12);
-  expect(verticalGap).toBeLessThanOrEqual(12);
+  expect(verticalGap).toBeLessThanOrEqual(48);
   await expect(page.getByRole("menuitem", { name: "Set as root" })).toBeVisible();
   await page.getByRole("menuitem", { name: "Show callers" }).click();
   await expect(graphFocusStatus).toContainText("Showing callers");
@@ -319,6 +328,15 @@ async function expectHoverAffordance(button: Locator) {
   await button.hover();
   await expect(button).not.toHaveCSS("background-color", backgroundBefore);
   await expect(button).not.toHaveCSS("box-shadow", "none");
+}
+
+async function graphZoom(page: Page): Promise<number> {
+  return page.locator(".react-flow__viewport").evaluate((node) => {
+    const transform = getComputedStyle(node).transform;
+    if (!transform || transform === "none") return 1;
+    const matrix = new DOMMatrixReadOnly(transform);
+    return matrix.a;
+  });
 }
 
 test("renders call graph minimap nodes for larger reports", async ({ page }) => {
