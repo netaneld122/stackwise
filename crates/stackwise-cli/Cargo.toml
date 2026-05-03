@@ -23,6 +23,7 @@ camino.workspace = true
 clap.workspace = true
 iced-x86.workspace = true
 include_dir.workspace = true
+indicatif.workspace = true
 object.workspace = true
 open.workspace = true
 schemars.workspace = true

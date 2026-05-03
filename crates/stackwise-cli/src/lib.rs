@@ -1,6 +1,7 @@
 mod cargo_mode;
 mod cli;
 mod config;
+mod progress;
 mod server;
 
 use std::ffi::OsString;
@@ -15,6 +16,7 @@ use stackwise_core::{analyze_artifact, AnalyzeOptions, BuildInfo, ExactMode, Sta
 use crate::cargo_mode::{run_cargo_analysis, CargoAnalysisRequest};
 use crate::cli::{Cli, Commands, ExactModeArg};
 use crate::config::StackwiseConfig;
+use crate::progress::AnalysisProgress;
 
 pub fn run<I, T>(args: I) -> anyhow::Result<()>
 where
@@ -25,13 +27,10 @@ where
 
     match cli.command {
         Some(Commands::Analyze(command)) => {
-            let report = analyze_artifact(
-                &command.artifact,
-                AnalyzeOptions {
-                    build: command.build_info(),
-                },
-            )?;
-            write_report(&report, command.json.as_deref())?;
+            let report = match command.json.as_deref() {
+                Some(path) => analyze_to_file(&command.artifact, command.build_info(), path)?,
+                None => analyze_to_stdout(&command.artifact, command.build_info())?,
+            };
             print_summary(&report);
         }
         Some(Commands::Open(command)) => {
@@ -73,21 +72,13 @@ where
     Ok(())
 }
 
-fn write_report(report: &StackwiseReport, path: Option<&Utf8Path>) -> anyhow::Result<()> {
-    match path {
-        Some(path) => {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("failed to create report directory {parent}"))?;
-            }
-            fs::write(path, serde_json::to_vec_pretty(report)?)
-                .with_context(|| format!("failed to write report {path}"))?;
-            println!("Wrote {}", path);
-        }
-        None => {
-            println!("{}", serde_json::to_string_pretty(report)?);
-        }
+fn write_report_to_file(report: &StackwiseReport, path: &Utf8Path) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create report directory {parent}"))?;
     }
+    fs::write(path, serde_json::to_vec_pretty(report)?)
+        .with_context(|| format!("failed to write report {path}"))?;
     Ok(())
 }
 
@@ -221,6 +212,9 @@ pub(crate) fn analyze_and_write(
     json_path: Utf8PathBuf,
 ) -> anyhow::Result<StackwiseReport> {
     let exact_required = build.exact_mode == ExactMode::Required;
+
+    let progress = AnalysisProgress::new();
+    progress.set_stage("Analyzing artifact...");
     let report = analyze_artifact(artifact, AnalyzeOptions { build: Some(build) })?;
     if exact_required && report.summary.confidence != stackwise_core::Confidence::Exact {
         bail!(
@@ -228,8 +222,39 @@ pub(crate) fn analyze_and_write(
             report.summary.confidence
         );
     }
-    write_report(&report, Some(&json_path))?;
+
+    progress.set_stage("Writing report...");
+    write_report_to_file(&report, &json_path)?;
+    progress.finish();
+
+    println!("Wrote {}", json_path);
     print_summary(&report);
+    Ok(report)
+}
+
+fn analyze_to_file(
+    artifact: &Utf8Path,
+    build: Option<BuildInfo>,
+    json_path: &Utf8Path,
+) -> anyhow::Result<StackwiseReport> {
+    let progress = AnalysisProgress::new();
+    progress.set_stage("Analyzing artifact...");
+    let report = analyze_artifact(artifact, AnalyzeOptions { build })?;
+
+    progress.set_stage("Writing report...");
+    write_report_to_file(&report, json_path)?;
+    progress.finish();
+
+    println!("Wrote {}", json_path);
+    Ok(report)
+}
+
+fn analyze_to_stdout(
+    artifact: &Utf8Path,
+    build: Option<BuildInfo>,
+) -> anyhow::Result<StackwiseReport> {
+    let report = analyze_artifact(artifact, AnalyzeOptions { build })?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(report)
 }
 
