@@ -632,6 +632,24 @@ canvas {
   min-width: 116px;
 }
 
+.nodeLimitControl {
+  flex: 0 1 210px;
+  min-width: 178px;
+}
+
+.nodeLimitControl input {
+  width: 112px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.nodeLimitControl strong {
+  min-width: 38px;
+  color: var(--heading);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 .edgeToggles {
   display: inline-flex;
   gap: 4px;
@@ -1489,6 +1507,17 @@ dd {
   background: var(--graph-panel-bg);
 }
 
+.limitBoundary {
+  width: 168px;
+  min-height: 62px;
+  border-color: rgba(217, 119, 6, 0.55);
+  background: linear-gradient(180deg, rgba(217, 119, 6, 0.14), var(--graph-panel-bg));
+}
+
+.limitBoundary strong {
+  color: #d97706;
+}
+
 .boundaryNode strong {
   font-size: 12px;
 }
@@ -1514,6 +1543,11 @@ dd {
 .callEdge.external_call path {
   stroke: #d97706;
   stroke-dasharray: 3 5;
+}
+
+.callEdge.limit path {
+  stroke: #d97706;
+  stroke-dasharray: 2 6;
 }
 
 .callEdge.dimmed path,

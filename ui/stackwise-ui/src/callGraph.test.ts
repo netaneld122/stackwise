@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { buildFocusedCallGraph, chooseDefaultRoot } from "./callGraph";
+import { buildFocusedCallGraph, chooseDefaultRoot, DEFAULT_CALL_GRAPH_NODE_LIMIT } from "./callGraph";
+import type { GraphSymbolNode } from "./callGraph";
 import type { EdgeKind, EdgeReport, StackwiseReport, SymbolReport } from "./report";
 
 const allEdges = new Set<EdgeKind>(["direct_call", "tail_call", "indirect_call", "external_call"]);
 
 describe("call graph helpers", () => {
+  it("defaults the call graph node budget to four times the original limit", () => {
+    expect(DEFAULT_CALL_GRAPH_NODE_LIMIT).toBe(480);
+  });
+
   it("keeps the primary crate entrypoint ahead of selected and summary defaults", () => {
     const report = reportWith([symbol(0, "demo::main", 16), symbol(1, "demo::heavy", 64)], []);
     report.summary.max_worst_path = { symbol_id: 1, bytes: 64, demangled: "demo::heavy" };
@@ -141,7 +146,107 @@ describe("call graph helpers", () => {
     expect(leaf && "visibleWorstStackBytes" in leaf ? leaf.visibleWorstStackBytes : null).toBe(64);
     expect(tailEdge?.addedStackBytes).toBe(32);
   });
+
+  it("keeps the longest root chain prefix and marks hidden callees when pruning a chain", () => {
+    const symbols = Array.from({ length: 6 }, (_, id) => symbol(id, id === 0 ? "demo::main" : `demo::f${id}`, 1));
+    const report = reportWith(symbols, symbols.slice(0, -1).map((source) => edge(source.id, source.id + 1, "direct_call")));
+
+    const graph = buildFocusedCallGraph(report, symbols, {
+      rootId: 0,
+      callerDepth: 0,
+      calleeDepth: 6,
+      maxNodes: 3,
+      edgeKinds: allEdges,
+    });
+
+    expect(graph.hiddenNodeCount).toBe(3);
+    expect(graph.nodes.map((node) => node.id).sort()).toEqual(["limit:2", "s:0", "s:1", "s:2"]);
+    expect(graph.edges.map((graphEdge) => `${graphEdge.source}->${graphEdge.target}:${graphEdge.kind}`).sort()).toEqual([
+      "s:0->s:1:direct_call",
+      "s:1->s:2:direct_call",
+      "s:2->limit:2:limit",
+    ]);
+    const main = graph.nodes.find((node) => node.id === "s:0");
+    const marker = graph.nodes.find((node) => node.id === "limit:2");
+    expect(main && "visibleWorstStackBytes" in main ? main.visibleWorstStackBytes : null).toBe(3);
+    expect(main && "visibleWorstBranchIds" in main ? main.visibleWorstBranchIds : null).toEqual([0, 1, 2]);
+    expect(marker && "label" in marker ? marker.label : null).toBe("+3 hidden callees");
+    expect(marker && "detail" in marker ? marker.detail : null).toBe("pruned by node limit");
+  });
+
+  it("adds one hidden-callee marker for pruned fanout leaves", () => {
+    const symbols = Array.from({ length: 7 }, (_, id) => symbol(id, id === 0 ? "demo::main" : `demo::leaf${id}`, 8));
+    const report = reportWith(symbols, symbols.slice(1).map((target) => edge(0, target.id, "direct_call")));
+
+    const graph = buildFocusedCallGraph(report, symbols, {
+      rootId: 0,
+      callerDepth: 0,
+      calleeDepth: 1,
+      maxNodes: 4,
+      edgeKinds: allEdges,
+    });
+
+    expect(graph.hiddenNodeCount).toBe(3);
+    expect(graph.nodes.map((node) => node.id).sort()).toEqual(["limit:0", "s:0", "s:1", "s:2", "s:3"]);
+    expect(graph.edges.filter((graphEdge) => graphEdge.kind === "limit")).toHaveLength(1);
+    const marker = graph.nodes.find((node) => node.id === "limit:0");
+    expect(marker && "label" in marker ? marker.label : null).toBe("+3 hidden callees");
+  });
+
+  it("prunes deepest leaves while keeping every retained symbol connected to root", () => {
+    const symbols = Array.from({ length: 7 }, (_, id) => symbol(id, id === 0 ? "demo::main" : `demo::n${id}`, 8));
+    const report = reportWith(symbols, [
+      edge(0, 1, "direct_call"),
+      edge(1, 2, "direct_call"),
+      edge(2, 3, "direct_call"),
+      edge(0, 4, "direct_call"),
+      edge(4, 5, "direct_call"),
+      edge(5, 6, "direct_call"),
+    ]);
+
+    const graph = buildFocusedCallGraph(report, symbols, {
+      rootId: 0,
+      callerDepth: 0,
+      calleeDepth: 3,
+      maxNodes: 5,
+      edgeKinds: allEdges,
+    });
+
+    const symbolIds = graph.nodes
+      .filter((node): node is GraphSymbolNode => "symbol" in node)
+      .map((node) => node.symbol.id)
+      .sort((left, right) => left - right);
+    expect(symbolIds).toHaveLength(5);
+    expect(symbolIds).toContain(0);
+    expect(symbolIds).not.toContain(3);
+    expect(symbolIds).not.toContain(6);
+    for (const id of symbolIds) {
+      if (id === 0) continue;
+      expect(hasPathFromRoot(graph.edges, id)).toBe(true);
+    }
+    expect(graph.nodes.filter((node) => "markerKind" in node && node.markerKind === "limit")).toHaveLength(2);
+  });
 });
+
+function hasPathFromRoot(edges: ReturnType<typeof buildFocusedCallGraph>["edges"], target: number): boolean {
+  const outgoing = new Map<string, string[]>();
+  for (const edge of edges) {
+    outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge.target]);
+  }
+  const targetId = `s:${target}`;
+  const queue = ["s:0"];
+  const seen = new Set(queue);
+  while (queue.length) {
+    const current = queue.shift()!;
+    if (current === targetId) return true;
+    for (const next of outgoing.get(current) ?? []) {
+      if (seen.has(next)) continue;
+      seen.add(next);
+      queue.push(next);
+    }
+  }
+  return false;
+}
 
 function symbol(id: number, demangled: string, own: number | null, crateName = "demo"): SymbolReport {
   return {

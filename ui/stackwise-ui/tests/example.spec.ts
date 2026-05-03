@@ -236,6 +236,9 @@ test("renders the application shell", async ({ page }) => {
   await expect(page.locator(".symbolNode").filter({ hasText: "demo::leaf" })).toBeVisible();
   await expect(page.getByText("Cumulative").first()).toBeVisible();
   await expect(page.getByText("+24 B")).toBeVisible();
+  const nodeLimitSlider = page.getByLabel("Call graph node limit");
+  await expect(nodeLimitSlider).toBeVisible();
+  await expect(nodeLimitSlider).toHaveValue("480");
   const leafNode = page.locator(".react-flow__node").filter({ hasText: "demo::leaf" });
   await expect(leafNode).toHaveCount(1);
   const leafNodeBox = await leafNode.boundingBox();
@@ -387,6 +390,65 @@ test("renders call graph minimap nodes for larger reports", async ({ page }) => 
   await expect.poll(async () => page.locator(".callGraphMiniMap .react-flow__minimap-node").count()).toBeGreaterThan(8);
 });
 
+test("call graph node limit prunes huge graphs from the leaves and marks cut points", async ({ page }) => {
+  const symbols = [
+    symbolFixture(0, "demo::main", ["demo"]),
+    ...Array.from({ length: 10 }, (_, branch) => symbolFixture(1 + branch, `demo::branch${branch}`, ["demo"])),
+  ];
+  const edges: Array<{ caller: number; callee: number; target_address: number; kind: string; confidence: string }> = [];
+  let nextId = symbols.length;
+  for (let branch = 0; branch < 10; branch += 1) {
+    const branchId = 1 + branch;
+    edges.push(edgeFixture(0, branchId));
+    for (let mid = 0; mid < 10; mid += 1) {
+      const midId = nextId;
+      symbols.push(symbolFixture(midId, `demo::branch${branch}::mid${mid}`, ["demo", `branch${branch}`]));
+      edges.push(edgeFixture(branchId, midId));
+      nextId += 1;
+      for (let leaf = 0; leaf < 5; leaf += 1) {
+        const leafId = nextId;
+        symbols.push(symbolFixture(leafId, `demo::branch${branch}::mid${mid}::leaf${leaf}`, ["demo", `branch${branch}`]));
+        edges.push(edgeFixture(midId, leafId));
+        nextId += 1;
+      }
+    }
+  }
+
+  await page.route("/report.json", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(reportFixture(symbols, edges)),
+    });
+  });
+
+  await page.goto("/");
+  await expect(page.getByLabel("Call graph node limit")).toHaveCount(0);
+  await page.getByRole("tab", { name: "Call Graph" }).click();
+  const slider = page.getByLabel("Call graph node limit");
+  await expect(slider).toBeVisible();
+  await expect(slider).toHaveValue("480");
+  await expect(page.locator(".symbolNode.root")).toContainText("demo::main");
+  await expect(page.locator('.symbolNode[title="demo::branch0"]')).toBeVisible();
+  await expect(page.locator('.symbolNode[title="demo::branch0::mid0::leaf0"]')).toBeVisible();
+  await expect(page.locator(".graphNotice")).toContainText("131 reachable symbols pruned");
+  await expect(page.locator(".limitBoundary").first()).toContainText("hidden callee");
+  await expect(page.locator(".callEdge.limit").first()).toBeVisible();
+  await expect(page.locator(".callGraphMiniMap")).toBeVisible();
+  await expect.poll(async () => page.locator(".symbolNode").count()).toBe(480);
+
+  await slider.fill("120");
+  await expect(slider).toHaveValue("120");
+  await expect(page.locator(".graphNotice")).toContainText("491 reachable symbols pruned");
+  await expect.poll(async () => page.locator(".symbolNode").count()).toBe(120);
+
+  await page.getByRole("button", { name: "Undo graph navigation" }).click();
+  await expect(slider).toHaveValue("480");
+  await expect(page.locator(".graphNotice")).toContainText("131 reachable symbols pruned");
+  await page.getByRole("button", { name: "Redo graph navigation" }).click();
+  await expect(slider).toHaveValue("120");
+  await expect(page.locator(".graphNotice")).toContainText("491 reachable symbols pruned");
+});
+
 test("unmeasured-only filtering does not crash the treemap", async ({ page }) => {
   await page.route("/report.json", async (route) => {
     await route.fulfill({
@@ -457,3 +519,72 @@ test("unmeasured-only filtering does not crash the treemap", async ({ page }) =>
   await expect(page.getByText("Stackwise")).toBeVisible();
   await expect(page.getByText("No positive own-frame values match the current filters.")).toBeVisible();
 });
+
+function symbolFixture(id: number, demangled: string, modulePath: string[]) {
+  return {
+    id,
+    name: demangled,
+    demangled,
+    crate_name: "demo",
+    module_path: modulePath,
+    address: id + 1,
+    size_bytes: 10,
+    own_frame: { bytes: 8 + (id % 24), status: "known", evidence_source: "elf_stack_sizes" },
+    worst_path: { bytes: 8 + (id % 24), status: "known", path: [id] },
+    confidence: "exact",
+    evidence: [],
+    unresolved_reasons: [],
+  };
+}
+
+function edgeFixture(caller: number, callee: number) {
+  return {
+    caller,
+    callee,
+    target_address: callee + 1,
+    kind: "direct_call",
+    confidence: "medium",
+  };
+}
+
+function reportFixture(
+  symbols: ReturnType<typeof symbolFixture>[],
+  edges: Array<ReturnType<typeof edgeFixture>>,
+) {
+  return {
+    schema_version: "0.1.0",
+    generator: { name: "stackwise", version: "0.1.0" },
+    artifact: {
+      path: "demo",
+      file_name: "demo",
+      format: "elf",
+      architecture: "x86_64",
+      pointer_width: 64,
+      size_bytes: 100,
+    },
+    summary: {
+      symbol_count: symbols.length,
+      edge_count: edges.length,
+      known_frame_count: symbols.length,
+      unknown_frame_count: 0,
+      recursive_symbol_count: 0,
+      indirect_edge_count: 0,
+      max_own_frame: { symbol_id: symbols.at(-1)?.id ?? 0, bytes: 31, demangled: symbols.at(-1)?.demangled ?? "demo::main" },
+      max_worst_path: { symbol_id: 0, bytes: 31, demangled: "demo::main" },
+      confidence: "exact",
+    },
+    symbols,
+    edges,
+    groups: [
+      {
+        id: 0,
+        name: "demo",
+        parent: null,
+        symbol_ids: symbols.map((symbol) => symbol.id),
+        own_frame_sum: symbols.reduce((sum, symbol) => sum + (symbol.own_frame.bytes ?? 0), 0),
+        worst_path_max: 31,
+      },
+    ],
+    diagnostics: [],
+  };
+}

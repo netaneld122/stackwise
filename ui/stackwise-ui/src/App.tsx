@@ -44,6 +44,7 @@ import { siClaude, siCursor } from "simple-icons";
 import {
   buildFocusedCallGraph,
   chooseDefaultRoot,
+  DEFAULT_CALL_GRAPH_NODE_LIMIT,
   symbolNodeId,
   type GraphNode,
 } from "./callGraph";
@@ -87,6 +88,7 @@ type GraphNavigationState = {
   rootId: number | null;
   callerDepth: number;
   calleeDepth: number;
+  nodeLimit: number;
   layout: GraphLayout;
   edgeKinds: EdgeKind[];
   mode: GraphNavigationMode;
@@ -104,6 +106,7 @@ const defaultGraphNavigationState: GraphNavigationState = {
   rootId: null,
   callerDepth: 0,
   calleeDepth: 4,
+  nodeLimit: DEFAULT_CALL_GRAPH_NODE_LIMIT,
   layout: "TB",
   edgeKinds: defaultGraphEdgeKinds,
   mode: "default",
@@ -207,7 +210,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
   const visibleSymbolIds = useMemo(() => new Set(symbols.map((symbol) => symbol.id)), [symbols]);
   const [graphHistory, setGraphHistory] = useState<GraphNavigationHistory>(() => initialGraphHistory());
   const graphState = graphHistory.present;
-  const { rootId: graphRootId, callerDepth, calleeDepth, layout: graphLayout } = graphState;
+  const { rootId: graphRootId, callerDepth, calleeDepth, nodeLimit, layout: graphLayout } = graphState;
   const edgeKinds = useMemo(() => new Set(graphState.edgeKinds), [graphState.edgeKinds]);
   const status = (
     <AnalysisFileStatus
@@ -269,6 +272,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
   };
   const setCallerDepth = (callerDepth: number) => commitGraphNavigation((current) => ({ ...current, callerDepth }));
   const setCalleeDepth = (calleeDepth: number) => commitGraphNavigation((current) => ({ ...current, calleeDepth }));
+  const setNodeLimit = (nodeLimit: number) => commitGraphNavigation((current) => ({ ...current, nodeLimit }));
   const setGraphLayout = (layout: GraphLayout) => commitGraphNavigation((current) => ({ ...current, layout }));
   const showWorstBranchHighlight = (symbolId: number) => commitGraphNavigation((current) => ({
     ...current,
@@ -399,6 +403,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
           <GraphControls
             callerDepth={callerDepth}
             calleeDepth={calleeDepth}
+            nodeLimit={nodeLimit}
             edgeKinds={edgeKinds}
             focusMode={effectiveGraphMode}
             focusSymbol={graphFocusSymbol}
@@ -409,6 +414,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
             onRedo={redoGraphNavigation}
             setCallerDepth={setCallerDepth}
             setCalleeDepth={setCalleeDepth}
+            setNodeLimit={setNodeLimit}
             setGraphLayout={setGraphLayout}
             toggleEdgeKind={toggleEdgeKind}
           />
@@ -423,6 +429,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
               rootId={effectiveGraphRoot}
               callerDepth={callerDepth}
               calleeDepth={calleeDepth}
+              nodeLimit={nodeLimit}
               edgeKinds={edgeKinds}
               layout={graphLayout}
               selectedId={selectedId}
@@ -441,6 +448,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
 function GraphControls({
   callerDepth,
   calleeDepth,
+  nodeLimit,
   edgeKinds,
   focusMode,
   focusSymbol,
@@ -451,11 +459,13 @@ function GraphControls({
   onRedo,
   setCallerDepth,
   setCalleeDepth,
+  setNodeLimit,
   setGraphLayout,
   toggleEdgeKind,
 }: {
   callerDepth: number;
   calleeDepth: number;
+  nodeLimit: number;
   edgeKinds: ReadonlySet<EdgeKind>;
   focusMode: GraphNavigationMode;
   focusSymbol: SymbolReport | null;
@@ -466,6 +476,7 @@ function GraphControls({
   onRedo: () => void;
   setCallerDepth: (value: number) => void;
   setCalleeDepth: (value: number) => void;
+  setNodeLimit: (value: number) => void;
   setGraphLayout: (value: GraphLayout) => void;
   toggleEdgeKind: (kind: EdgeKind) => void;
 }) {
@@ -514,6 +525,19 @@ function GraphControls({
           <select value={calleeDepth} onChange={(event) => setCalleeDepth(Number(event.target.value))}>
             {[0, 1, 2, 3, 4, 5, 6].map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
+        </label>
+        <label className="nodeLimitControl">
+          Nodes
+          <input
+            aria-label="Call graph node limit"
+            type="range"
+            min={120}
+            max={4096}
+            step={8}
+            value={nodeLimit}
+            onChange={(event) => setNodeLimit(Number(event.target.value))}
+          />
+          <strong>{nodeLimit.toLocaleString()}</strong>
         </label>
         <div className="edgeToggles" aria-label="Call edge filters">
           {(["direct_call", "tail_call", "indirect_call", "external_call"] as EdgeKind[]).map((kind) => (
@@ -607,6 +631,7 @@ function sameGraphNavigationState(left: GraphNavigationState, right: GraphNaviga
     left.rootId === right.rootId &&
     left.callerDepth === right.callerDepth &&
     left.calleeDepth === right.calleeDepth &&
+    left.nodeLimit === right.nodeLimit &&
     left.layout === right.layout &&
     left.mode === right.mode &&
     left.actionSymbolId === right.actionSymbolId &&
@@ -1769,6 +1794,7 @@ function CallGraphView({
   rootId,
   callerDepth,
   calleeDepth,
+  nodeLimit,
   edgeKinds,
   layout,
   selectedId,
@@ -1782,6 +1808,7 @@ function CallGraphView({
   rootId: number | null;
   callerDepth: number;
   calleeDepth: number;
+  nodeLimit: number;
   edgeKinds: ReadonlySet<EdgeKind>;
   layout: GraphLayout;
   selectedId: number | null;
@@ -1798,10 +1825,10 @@ function CallGraphView({
         rootId,
         callerDepth,
         calleeDepth,
-        maxNodes: 120,
+        maxNodes: nodeLimit,
         edgeKinds,
       }),
-    [calleeDepth, callerDepth, edgeKinds, report, rootId, symbols],
+    [calleeDepth, callerDepth, edgeKinds, nodeLimit, report, rootId, symbols],
   );
   const visibleGraph = useMemo(
     () => worstPathGraphSlice(focused.nodes, focused.edges, highlightedWorstBranchRootId),
@@ -1812,8 +1839,8 @@ function CallGraphView({
     [highlightedWorstBranchRootId, layout, report, selectedId, visibleGraph],
   );
   const fitKey = useMemo(
-    () => `${focused.rootId}:${highlightedWorstBranchRootId ?? "all"}:${layout}:${callerDepth}:${calleeDepth}:${[...edgeKinds].sort().join(",")}:${symbols.length}`,
-    [calleeDepth, callerDepth, edgeKinds, focused.rootId, highlightedWorstBranchRootId, layout, symbols.length],
+    () => `${focused.rootId}:${highlightedWorstBranchRootId ?? "all"}:${layout}:${callerDepth}:${calleeDepth}:${nodeLimit}:${[...edgeKinds].sort().join(",")}:${symbols.length}`,
+    [calleeDepth, callerDepth, edgeKinds, focused.rootId, highlightedWorstBranchRootId, layout, nodeLimit, symbols.length],
   );
   const initialFitMinZoom = nodes.length <= 6 ? 0.82 : nodes.length <= 24 ? 0.58 : 0.28;
 
@@ -1844,7 +1871,9 @@ function CallGraphView({
   return (
     <div className="graphShell">
       {focused.hiddenNodeCount > 0 ? (
-        <div className="graphNotice">{focused.hiddenNodeCount.toLocaleString()} connected symbols hidden by the graph size limit.</div>
+        <div className="graphNotice">
+          {focused.hiddenNodeCount.toLocaleString()} reachable symbols pruned by the node limit. Cut markers show where hidden branches continue.
+        </div>
       ) : null}
       <ReactFlow
         key={fitKey}
@@ -1959,7 +1988,7 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
   const handles = handlePositions(data.layout);
   if (!("symbol" in node)) {
     return (
-      <div className="callNode boundaryNode">
+      <div className={`callNode boundaryNode${node.markerKind === "limit" ? " limitBoundary" : ""}`}>
         <Handle type="target" position={handles.target} />
         <strong>{node.label}</strong>
         <span>{node.detail}</span>
@@ -2004,7 +2033,11 @@ function layoutFlowGraph(
 
   const sizeById = new Map<string, { width: number; height: number }>();
   for (const node of graphNodes) {
-    const size = "symbol" in node ? { width: 278, height: 142 } : { width: 160, height: 72 };
+    const size = "symbol" in node
+      ? { width: 278, height: 142 }
+      : node.markerKind === "limit"
+        ? { width: 168, height: 62 }
+        : { width: 160, height: 72 };
     sizeById.set(node.id, size);
     graph.setNode(node.id, size);
   }
@@ -2015,6 +2048,7 @@ function layoutFlowGraph(
     const point = graph.node(graphNode.id) as { x: number; y: number } | undefined;
     const size = sizeById.get(graphNode.id) ?? { width: 200, height: 100 };
     const symbol = "symbol" in graphNode ? graphNode.symbol : null;
+    const markerKind = "symbol" in graphNode ? null : graphNode.markerKind;
     return {
       id: graphNode.id,
       type: "stackwise",
@@ -2027,7 +2061,7 @@ function layoutFlowGraph(
       measured: size,
       data: {
         graphNode,
-        color: symbol ? groupColor(symbol, report) : "#64748b",
+        color: symbol ? groupColor(symbol, report) : markerKind === "limit" ? "#d97706" : "#64748b",
         layout,
         selected: symbol?.id === selectedId,
         dimmed: false,
@@ -2113,6 +2147,7 @@ function handlePositions(layout: GraphLayout): { target: Position; source: Posit
 }
 
 function graphEdgeLabel(edge: ReturnType<typeof buildFocusedCallGraph>["edges"][number]): string {
+  if (edge.kind === "limit") return "limit";
   const delta = edge.addedStackBytes == null ? null : `+${formatBytes(edge.addedStackBytes)}`;
   if (edge.kind === "tail_call") return delta ? `${delta} tail` : "tail";
   if (edge.kind === "direct_call") return delta ?? "unmeasured";

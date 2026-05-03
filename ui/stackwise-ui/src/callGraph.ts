@@ -9,6 +9,9 @@ import {
 
 export type GraphRelation = "caller" | "root" | "callee";
 export type GraphStackStatus = "known" | "unknown";
+export type GraphEdgeKind = EdgeKind | "limit";
+
+export const DEFAULT_CALL_GRAPH_NODE_LIMIT = 480;
 
 export interface GraphOptions {
   rootId: number | null;
@@ -36,6 +39,7 @@ export interface GraphBoundaryNode {
   detail: string;
   ownerId: number;
   relation: GraphRelation;
+  markerKind?: "limit";
 }
 
 export type GraphNode = GraphSymbolNode | GraphBoundaryNode;
@@ -44,7 +48,7 @@ export interface GraphEdge {
   id: string;
   source: string;
   target: string;
-  kind: EdgeKind;
+  kind: GraphEdgeKind;
   confidence: string;
   addedStackBytes: number | null;
   addedStackStatus: GraphStackStatus;
@@ -61,6 +65,12 @@ interface GraphIndex {
   byId: Map<number, SymbolReport>;
   incoming: Map<number, EdgeReport[]>;
   outgoing: Map<number, EdgeReport[]>;
+}
+
+interface PrunedGraph {
+  nodeIds: Set<number>;
+  hiddenNodeCount: number;
+  hiddenCalleesByOwner: Map<number, number>;
 }
 
 const SYMBOL_PREFIX = "s:";
@@ -111,22 +121,14 @@ export function buildFocusedCallGraph(
   visibleIds.add(rootId);
   const index = buildGraphIndex(report, visibleIds, allSymbolsById);
 
-  const nodeIds = new Set<number>([rootId]);
+  const reachableNodeIds = new Set<number>([rootId]);
   const relationById = new Map<number, GraphRelation>([[rootId, "root"]]);
   const depthById = new Map<number, number>([[rootId, 0]]);
   const graphEdges = new Map<string, GraphEdge>();
-  let hiddenNodeCount = 0;
-
-  const canAddNode = (id: number) => {
-    if (nodeIds.has(id)) return true;
-    if (nodeIds.size < options.maxNodes) return true;
-    hiddenNodeCount += 1;
-    return false;
-  };
 
   const addSymbolNode = (id: number, relation: GraphRelation, depth: number) => {
-    if (!visibleIds.has(id) || !canAddNode(id)) return false;
-    nodeIds.add(id);
+    if (!visibleIds.has(id)) return false;
+    reachableNodeIds.add(id);
     const currentDepth = depthById.get(id);
     if (currentDepth == null || depth < currentDepth) depthById.set(id, depth);
     if (!relationById.has(id) || relationById.get(id) !== "root") relationById.set(id, relation);
@@ -148,17 +150,23 @@ export function buildFocusedCallGraph(
 
   walkCallers(rootId, options.callerDepth, index, options.edgeKinds, (edge, depth) => {
     if (edge.callee == null || !addSymbolNode(edge.caller, "caller", depth)) return false;
-    addEdge(edge, symbolNodeId(edge.caller), symbolNodeId(edge.callee));
     return true;
   });
 
   walkCallees(rootId, options.calleeDepth, index, options.edgeKinds, (edge, depth) => {
     if (edge.callee == null) return false;
     if (!addSymbolNode(edge.callee, "callee", depth)) return false;
-    addEdge(edge, symbolNodeId(edge.caller), symbolNodeId(edge.callee));
     return true;
   });
 
+  const { nodeIds, hiddenNodeCount, hiddenCalleesByOwner } = pruneReachableGraph(
+    rootId,
+    reachableNodeIds,
+    depthById,
+    index,
+    options.edgeKinds,
+    options.maxNodes,
+  );
   const stackById = computeCumulativeStacks(rootId, nodeIds, relationById, depthById, index, options.edgeKinds);
   const nodes: GraphNode[] = [...nodeIds].map((id) => {
     const symbol = index.byId.get(id)!;
@@ -181,12 +189,26 @@ export function buildFocusedCallGraph(
       if (!options.edgeKinds.has(edge.kind)) continue;
       if (edge.callee != null && nodeIds.has(edge.callee)) {
         addEdge(edge, symbolNodeId(edge.caller), symbolNodeId(edge.callee));
-      } else if (edge.kind === "indirect_call" || edge.kind === "external_call") {
+      } else if (edge.callee == null && (edge.kind === "indirect_call" || edge.kind === "external_call")) {
         const boundary = boundaryNode(edge, id);
         nodes.push(boundary);
         addEdge(edge, symbolNodeId(id), boundary.id);
       }
     }
+  }
+
+  for (const [ownerId, hiddenCount] of hiddenCalleesByOwner) {
+    const boundary = limitBoundaryNode(ownerId, hiddenCount);
+    nodes.push(boundary);
+    graphEdges.set(limitEdgeKey(ownerId), {
+      id: limitEdgeKey(ownerId),
+      source: symbolNodeId(ownerId),
+      target: boundary.id,
+      kind: "limit",
+      confidence: "limit",
+      addedStackBytes: null,
+      addedStackStatus: "known",
+    });
   }
 
   const edges = [...graphEdges.values()].map((edge) => withStackDelta(edge, index, stackById));
@@ -206,6 +228,155 @@ export function buildFocusedCallGraph(
     edges,
     hiddenNodeCount,
   };
+}
+
+function pruneReachableGraph(
+  rootId: number,
+  reachableNodeIds: ReadonlySet<number>,
+  depthById: ReadonlyMap<number, number>,
+  index: GraphIndex,
+  edgeKinds: ReadonlySet<EdgeKind>,
+  maxNodes: number,
+): PrunedGraph {
+  const nodeLimit = Math.max(1, Math.floor(maxNodes));
+  const nodeIds = new Set(reachableNodeIds);
+  while (nodeIds.size > nodeLimit) {
+    const candidate = choosePruneCandidate(rootId, nodeIds, depthById, index, edgeKinds);
+    if (candidate == null) break;
+    nodeIds.delete(candidate);
+    keepRootConnected(rootId, nodeIds, index, edgeKinds);
+  }
+
+  return {
+    nodeIds,
+    hiddenNodeCount: reachableNodeIds.size - nodeIds.size,
+    hiddenCalleesByOwner: hiddenCalleeCounts(reachableNodeIds, nodeIds, index, edgeKinds),
+  };
+}
+
+function choosePruneCandidate(
+  rootId: number,
+  nodeIds: ReadonlySet<number>,
+  depthById: ReadonlyMap<number, number>,
+  index: GraphIndex,
+  edgeKinds: ReadonlySet<EdgeKind>,
+): number | null {
+  const candidates = [...nodeIds]
+    .filter((id) => id !== rootId)
+    .sort((left, right) => (depthById.get(right) ?? 0) - (depthById.get(left) ?? 0) || right - left);
+  if (!candidates.length) return null;
+
+  const leaf = candidates.find((id) => graphNeighborCount(id, nodeIds, index, edgeKinds) <= 1);
+  if (leaf != null) return leaf;
+
+  return candidates.find((id) => keepsRootConnectedAfterRemoving(rootId, id, nodeIds, index, edgeKinds))
+    ?? candidates[0]
+    ?? null;
+}
+
+function graphNeighborCount(
+  id: number,
+  nodeIds: ReadonlySet<number>,
+  index: GraphIndex,
+  edgeKinds: ReadonlySet<EdgeKind>,
+): number {
+  return graphNeighbors(id, nodeIds, index, edgeKinds).size;
+}
+
+function graphNeighbors(
+  id: number,
+  nodeIds: ReadonlySet<number>,
+  index: GraphIndex,
+  edgeKinds: ReadonlySet<EdgeKind>,
+): Set<number> {
+  const neighbors = new Set<number>();
+  for (const edge of index.outgoing.get(id) ?? []) {
+    if (edge.callee != null && edgeKinds.has(edge.kind) && nodeIds.has(edge.callee)) neighbors.add(edge.callee);
+  }
+  for (const edge of index.incoming.get(id) ?? []) {
+    if (edgeKinds.has(edge.kind) && nodeIds.has(edge.caller)) neighbors.add(edge.caller);
+  }
+  return neighbors;
+}
+
+function keepsRootConnectedAfterRemoving(
+  rootId: number,
+  removingId: number,
+  nodeIds: ReadonlySet<number>,
+  index: GraphIndex,
+  edgeKinds: ReadonlySet<EdgeKind>,
+): boolean {
+  const next = new Set(nodeIds);
+  next.delete(removingId);
+  return connectedFromRoot(rootId, next, index, edgeKinds).size === next.size;
+}
+
+function keepRootConnected(
+  rootId: number,
+  nodeIds: Set<number>,
+  index: GraphIndex,
+  edgeKinds: ReadonlySet<EdgeKind>,
+) {
+  const connected = connectedFromRoot(rootId, nodeIds, index, edgeKinds);
+  for (const id of nodeIds) {
+    if (!connected.has(id)) nodeIds.delete(id);
+  }
+}
+
+function connectedFromRoot(
+  rootId: number,
+  nodeIds: ReadonlySet<number>,
+  index: GraphIndex,
+  edgeKinds: ReadonlySet<EdgeKind>,
+): Set<number> {
+  const connected = new Set<number>();
+  if (!nodeIds.has(rootId)) return connected;
+  const queue = [rootId];
+  connected.add(rootId);
+  while (queue.length) {
+    const id = queue.shift()!;
+    for (const neighbor of graphNeighbors(id, nodeIds, index, edgeKinds)) {
+      if (connected.has(neighbor)) continue;
+      connected.add(neighbor);
+      queue.push(neighbor);
+    }
+  }
+  return connected;
+}
+
+function hiddenCalleeCounts(
+  reachableNodeIds: ReadonlySet<number>,
+  retainedNodeIds: ReadonlySet<number>,
+  index: GraphIndex,
+  edgeKinds: ReadonlySet<EdgeKind>,
+): Map<number, number> {
+  const hidden = new Set([...reachableNodeIds].filter((id) => !retainedNodeIds.has(id)));
+  const counts = new Map<number, number>();
+  for (const ownerId of retainedNodeIds) {
+    const hiddenDescendants = new Set<number>();
+    for (const edge of index.outgoing.get(ownerId) ?? []) {
+      if (edge.callee == null || !edgeKinds.has(edge.kind) || !hidden.has(edge.callee)) continue;
+      collectHiddenCallees(edge.callee, hidden, index, edgeKinds, hiddenDescendants);
+    }
+    if (hiddenDescendants.size > 0) counts.set(ownerId, hiddenDescendants.size);
+  }
+  return counts;
+}
+
+function collectHiddenCallees(
+  id: number,
+  hidden: ReadonlySet<number>,
+  index: GraphIndex,
+  edgeKinds: ReadonlySet<EdgeKind>,
+  collected: Set<number>,
+) {
+  if (!hidden.has(id) || collected.has(id)) return;
+  collected.add(id);
+  for (const edge of index.outgoing.get(id) ?? []) {
+    if (edge.callee != null && edgeKinds.has(edge.kind)) {
+      collectHiddenCallees(edge.callee, hidden, index, edgeKinds, collected);
+    }
+  }
 }
 
 function choosePrimaryEntryPoint(report: StackwiseReport): number | null {
@@ -374,6 +545,7 @@ function computeVisibleWorstStacks(
 ) {
   const outgoing = new Map<number, Array<{ callee: number; kind: EdgeKind }>>();
   for (const edge of edges) {
+    if (edge.kind === "limit") continue;
     const caller = symbolIdFromNodeId(edge.source);
     const callee = symbolIdFromNodeId(edge.target);
     if (caller == null || callee == null || !nodeIds.has(caller) || !nodeIds.has(callee)) continue;
@@ -464,6 +636,25 @@ function boundaryNode(edge: EdgeReport, ownerId: number): GraphBoundaryNode {
     ownerId,
     relation: "callee",
   };
+}
+
+function limitBoundaryNode(ownerId: number, hiddenCount: number): GraphBoundaryNode {
+  return {
+    id: limitBoundaryNodeId(ownerId),
+    label: `+${hiddenCount.toLocaleString()} hidden ${hiddenCount === 1 ? "callee" : "callees"}`,
+    detail: "pruned by node limit",
+    ownerId,
+    relation: "callee",
+    markerKind: "limit",
+  };
+}
+
+function limitBoundaryNodeId(ownerId: number): string {
+  return `limit:${ownerId}`;
+}
+
+function limitEdgeKey(ownerId: number): string {
+  return `${symbolNodeId(ownerId)}->${limitBoundaryNodeId(ownerId)}:limit`;
 }
 
 function edgeKey(edge: EdgeReport, source: string, target: string): string {
