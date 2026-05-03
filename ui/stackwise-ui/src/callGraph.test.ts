@@ -160,6 +160,7 @@ describe("call graph helpers", () => {
     });
 
     expect(graph.hiddenNodeCount).toBe(3);
+    expect(graph.reachableNodeCount).toBe(6);
     expect(graph.nodes.map((node) => node.id).sort()).toEqual(["limit:2", "s:0", "s:1", "s:2"]);
     expect(graph.edges.map((graphEdge) => `${graphEdge.source}->${graphEdge.target}:${graphEdge.kind}`).sort()).toEqual([
       "s:0->s:1:direct_call",
@@ -187,6 +188,7 @@ describe("call graph helpers", () => {
     });
 
     expect(graph.hiddenNodeCount).toBe(3);
+    expect(graph.reachableNodeCount).toBe(7);
     expect(graph.nodes.map((node) => node.id).sort()).toEqual(["limit:0", "s:0", "s:1", "s:2", "s:3"]);
     expect(graph.edges.filter((graphEdge) => graphEdge.kind === "limit")).toHaveLength(1);
     const marker = graph.nodes.find((node) => node.id === "limit:0");

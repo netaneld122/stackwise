@@ -233,6 +233,21 @@ function ReportView({ report }: { report: StackwiseReport }) {
   const graphFocusSymbol = report.symbols.find(
     (symbol) => symbol.id === graphFocusSymbolId,
   ) ?? null;
+  const graphLimitStats = useMemo(
+    () => {
+      if (viewMode !== "call_graph") return null;
+      return buildFocusedCallGraph(report, symbols, {
+        rootId: effectiveGraphRoot,
+        callerDepth,
+        calleeDepth,
+        maxNodes: Number.MAX_SAFE_INTEGER,
+        edgeKinds,
+      });
+    },
+    [calleeDepth, callerDepth, edgeKinds, effectiveGraphRoot, report, symbols, viewMode],
+  );
+  const graphNodeLimitMax = Math.max(1, graphLimitStats?.reachableNodeCount ?? nodeLimit);
+  const effectiveNodeLimit = clamp(nodeLimit, 1, graphNodeLimitMax);
 
   useEffect(() => {
     setGraphHistory(initialGraphHistory());
@@ -403,7 +418,8 @@ function ReportView({ report }: { report: StackwiseReport }) {
           <GraphControls
             callerDepth={callerDepth}
             calleeDepth={calleeDepth}
-            nodeLimit={nodeLimit}
+            nodeLimit={effectiveNodeLimit}
+            nodeLimitMax={graphNodeLimitMax}
             edgeKinds={edgeKinds}
             focusMode={effectiveGraphMode}
             focusSymbol={graphFocusSymbol}
@@ -429,7 +445,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
               rootId={effectiveGraphRoot}
               callerDepth={callerDepth}
               calleeDepth={calleeDepth}
-              nodeLimit={nodeLimit}
+              nodeLimit={effectiveNodeLimit}
               edgeKinds={edgeKinds}
               layout={graphLayout}
               selectedId={selectedId}
@@ -449,6 +465,7 @@ function GraphControls({
   callerDepth,
   calleeDepth,
   nodeLimit,
+  nodeLimitMax,
   edgeKinds,
   focusMode,
   focusSymbol,
@@ -466,6 +483,7 @@ function GraphControls({
   callerDepth: number;
   calleeDepth: number;
   nodeLimit: number;
+  nodeLimitMax: number;
   edgeKinds: ReadonlySet<EdgeKind>;
   focusMode: GraphNavigationMode;
   focusSymbol: SymbolReport | null;
@@ -531,13 +549,16 @@ function GraphControls({
           <input
             aria-label="Call graph node limit"
             type="range"
-            min={120}
-            max={4096}
-            step={8}
+            min={1}
+            max={nodeLimitMax}
+            step={1}
             value={nodeLimit}
-            onChange={(event) => setNodeLimit(Number(event.target.value))}
+            title={`${nodeLimit.toLocaleString()} of ${nodeLimitMax.toLocaleString()} reachable symbols`}
+            onChange={(event) => setNodeLimit(clamp(Number(event.target.value), 1, nodeLimitMax))}
           />
-          <strong>{nodeLimit.toLocaleString()}</strong>
+          <strong title={`${nodeLimit.toLocaleString()} of ${nodeLimitMax.toLocaleString()} reachable symbols`}>
+            {nodeLimit.toLocaleString()} / {nodeLimitMax.toLocaleString()}
+          </strong>
         </label>
         <div className="edgeToggles" aria-label="Call edge filters">
           {(["direct_call", "tail_call", "indirect_call", "external_call"] as EdgeKind[]).map((kind) => (

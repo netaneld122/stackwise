@@ -633,8 +633,8 @@ canvas {
 }
 
 .nodeLimitControl {
-  flex: 0 1 210px;
-  min-width: 178px;
+  flex: 0 1 260px;
+  min-width: 238px;
 }
 
 .nodeLimitControl input {
@@ -644,7 +644,7 @@ canvas {
 }
 
 .nodeLimitControl strong {
-  min-width: 38px;
+  min-width: 82px;
   color: var(--heading);
   font-variant-numeric: tabular-nums;
   text-align: right;

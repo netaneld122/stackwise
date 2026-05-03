@@ -238,7 +238,10 @@ test("renders the application shell", async ({ page }) => {
   await expect(page.getByText("+24 B")).toBeVisible();
   const nodeLimitSlider = page.getByLabel("Call graph node limit");
   await expect(nodeLimitSlider).toBeVisible();
-  await expect(nodeLimitSlider).toHaveValue("480");
+  await expect(nodeLimitSlider).toHaveAttribute("min", "1");
+  await expect(nodeLimitSlider).toHaveAttribute("max", "2");
+  await expect(nodeLimitSlider).toHaveAttribute("step", "1");
+  await expect(nodeLimitSlider).toHaveValue("2");
   const leafNode = page.locator(".react-flow__node").filter({ hasText: "demo::leaf" });
   await expect(leafNode).toHaveCount(1);
   const leafNodeBox = await leafNode.boundingBox();
@@ -426,6 +429,9 @@ test("call graph node limit prunes huge graphs from the leaves and marks cut poi
   await page.getByRole("tab", { name: "Call Graph" }).click();
   const slider = page.getByLabel("Call graph node limit");
   await expect(slider).toBeVisible();
+  await expect(slider).toHaveAttribute("min", "1");
+  await expect(slider).toHaveAttribute("max", "611");
+  await expect(slider).toHaveAttribute("step", "1");
   await expect(slider).toHaveValue("480");
   await expect(page.locator(".symbolNode.root")).toContainText("demo::main");
   await expect(page.locator('.symbolNode[title="demo::branch0"]')).toBeVisible();

@@ -59,6 +59,7 @@ export interface FocusedCallGraph {
   nodes: GraphNode[];
   edges: GraphEdge[];
   hiddenNodeCount: number;
+  reachableNodeCount: number;
 }
 
 interface GraphIndex {
@@ -117,7 +118,7 @@ export function buildFocusedCallGraph(
   const rootId = options.rootId != null && allSymbolsById.has(options.rootId)
     ? options.rootId
     : chooseDefaultRoot(report, visibleSymbols, null);
-  if (rootId == null) return { rootId: null, nodes: [], edges: [], hiddenNodeCount: 0 };
+  if (rootId == null) return { rootId: null, nodes: [], edges: [], hiddenNodeCount: 0, reachableNodeCount: 0 };
   visibleIds.add(rootId);
   const index = buildGraphIndex(report, visibleIds, allSymbolsById);
 
@@ -227,6 +228,7 @@ export function buildFocusedCallGraph(
     nodes,
     edges,
     hiddenNodeCount,
+    reachableNodeCount: reachableNodeIds.size,
   };
 }
 
