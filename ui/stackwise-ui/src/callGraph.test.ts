@@ -153,7 +153,7 @@ describe("call graph helpers", () => {
     expect(tailEdge?.addedStackBytes).toBe(32);
   });
 
-  it("keeps the longest root chain prefix and marks hidden callees when pruning a chain", () => {
+  it("keeps the longest root chain prefix and marks pruned branches as reveal-more", () => {
     const symbols = Array.from({ length: 6 }, (_, id) => symbol(id, id === 0 ? "demo::main" : `demo::f${id}`, 1));
     const report = reportWith(symbols, symbols.slice(0, -1).map((source) => edge(source.id, source.id + 1, "direct_call")));
 
@@ -175,11 +175,12 @@ describe("call graph helpers", () => {
     const marker = graph.nodes.find((node) => node.id === "limit:callee:2");
     expect(main && "visibleWorstStackBytes" in main ? main.visibleWorstStackBytes : null).toBe(3);
     expect(main && "visibleWorstBranchIds" in main ? main.visibleWorstBranchIds : null).toEqual([0, 1, 2]);
-    expect(marker && "label" in marker ? marker.label : null).toBe("+3 hidden callees");
-    expect(marker && "detail" in marker ? marker.detail : null).toBe("pruned by node limit");
+    expect(marker && "label" in marker ? marker.label : null).toBe("Reveal more");
+    expect(marker && "detail" in marker ? marker.detail : null).toBe("+3 callees");
+    expect(marker && "hiddenCount" in marker ? marker.hiddenCount : null).toBe(3);
   });
 
-  it("adds one hidden-callee marker for pruned fanout leaves", () => {
+  it("adds one reveal-more marker for pruned fanout leaves", () => {
     const symbols = Array.from({ length: 7 }, (_, id) => symbol(id, id === 0 ? "demo::main" : `demo::leaf${id}`, 8));
     const report = reportWith(symbols, symbols.slice(1).map((target) => edge(0, target.id, "direct_call")));
 
@@ -194,7 +195,8 @@ describe("call graph helpers", () => {
     expect(graph.nodes.map((node) => node.id).sort()).toEqual(["limit:callee:0", "s:0", "s:1", "s:2", "s:3"]);
     expect(graph.edges.filter((graphEdge) => graphEdge.kind === "limit")).toHaveLength(1);
     const marker = graph.nodes.find((node) => node.id === "limit:callee:0");
-    expect(marker && "label" in marker ? marker.label : null).toBe("+3 hidden callees");
+    expect(marker && "label" in marker ? marker.label : null).toBe("Reveal more");
+    expect(marker && "detail" in marker ? marker.detail : null).toBe("+3 callees");
   });
 
   it("prunes deepest leaves while keeping every retained symbol connected to root", () => {
@@ -250,7 +252,8 @@ describe("call graph helpers", () => {
     expect(graph.nodes.map((node) => node.id).sort()).toContain("limit:caller:1");
     expect(graph.edges.some((graphEdge) => graphEdge.source === "limit:caller:1" && graphEdge.target === "s:1")).toBe(true);
     const marker = graph.nodes.find((node) => node.id === "limit:caller:1");
-    expect(marker && "label" in marker ? marker.label : null).toBe("+2 hidden callers");
+    expect(marker && "label" in marker ? marker.label : null).toBe("Reveal more");
+    expect(marker && "detail" in marker ? marker.detail : null).toBe("+2 callers");
   });
 });
 

@@ -39,6 +39,7 @@ export interface GraphBoundaryNode {
   detail: string;
   ownerId: number;
   relation: Exclude<GraphRelation, "root">;
+  hiddenCount?: number;
   markerKind?: "limit";
 }
 
@@ -639,10 +640,11 @@ function limitBoundaryNode(ownerId: number, hiddenCount: number, relation: Exclu
     : hiddenCount === 1 ? "callee" : "callees";
   return {
     id: limitBoundaryNodeId(ownerId, relation),
-    label: `+${hiddenCount.toLocaleString()} hidden ${noun}`,
-    detail: "pruned by node limit",
+    label: "Reveal more",
+    detail: `+${hiddenCount.toLocaleString()} ${noun}`,
     ownerId,
     relation,
+    hiddenCount,
     markerKind: "limit",
   };
 }

@@ -521,20 +521,25 @@ test("call graph node slider is the only branch limit and preserves the viewport
   await expect(nodeLimitSlider).toHaveAttribute("max", "7");
   await nodeLimitSlider.fill("3");
   await expect(page.locator('.symbolNode[title="demo::f3"]')).toHaveCount(0);
-  await expect(page.locator(".limitBoundary")).toContainText("+4 hidden callees");
+  await expect(page.locator(".limitBoundary")).toContainText("Reveal more");
+  await expect(page.locator(".limitBoundary")).toContainText("+4 callees");
 
   const beforeRevealViewport = await graphViewport(page);
-  await nodeLimitSlider.fill("4");
+  await page.getByRole("button", { name: /Reveal more/ }).click();
   await expect(page.locator('.symbolNode[title="demo::f3"]')).toBeVisible();
+  await expect(page.locator('.symbolNode[title="demo::f6"]')).toBeVisible();
   const afterRevealViewport = await graphViewport(page);
   expect(Math.abs(afterRevealViewport.zoom - beforeRevealViewport.zoom)).toBeLessThan(0.001);
   expect(Math.abs(afterRevealViewport.x - beforeRevealViewport.x)).toBeLessThan(0.001);
   expect(Math.abs(afterRevealViewport.y - beforeRevealViewport.y)).toBeLessThan(0.001);
-  await expect(page.locator(".limitBoundary")).toContainText("+3 hidden callees");
+  await expect(nodeLimitSlider).toHaveValue("7");
+  await expect(page.locator(".limitBoundary")).toHaveCount(0);
+  await expect(page.locator(".graphNotice")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Undo graph navigation" })).toBeEnabled();
   await page.getByRole("button", { name: "Undo graph navigation" }).click();
   await expect(page.locator('.symbolNode[title="demo::f3"]')).toHaveCount(0);
-  await expect(page.locator(".limitBoundary")).toContainText("+4 hidden callees");
+  await expect(page.locator(".limitBoundary")).toContainText("Reveal more");
+  await expect(page.locator(".limitBoundary")).toContainText("+4 callees");
 });
 
 test("call graph node limit prunes huge graphs from the leaves and marks cut points", async ({ page }) => {
@@ -575,7 +580,7 @@ test("call graph node limit prunes huge graphs from the leaves and marks cut poi
   await expect(page.locator('.symbolNode[title="demo::branch0"]')).toBeVisible();
   await expect(page.locator('.symbolNode[title="demo::branch0::leaf0"]')).toBeVisible();
   await expect(page.locator(".graphNotice")).toContainText("131 reachable symbols pruned");
-  await expect(page.locator(".limitBoundary").first()).toContainText("hidden callee");
+  await expect(page.locator(".limitBoundary").first()).toContainText("Reveal more");
   await expect(page.locator(".callEdge.limit").first()).toBeVisible();
   await expect(page.locator(".callGraphMiniMap")).toBeVisible();
   await expect.poll(async () => page.locator(".symbolNode").count()).toBe(480);
@@ -591,6 +596,12 @@ test("call graph node limit prunes huge graphs from the leaves and marks cut poi
   await page.getByRole("button", { name: "Redo graph navigation" }).click();
   await expect(slider).toHaveValue("120");
   await expect(page.locator(".graphNotice")).toContainText("491 reachable symbols pruned");
+
+  await slider.fill("611");
+  await expect(slider).toHaveValue("611");
+  await expect(page.locator(".graphNotice")).toHaveCount(0);
+  await expect(page.locator(".limitBoundary")).toHaveCount(0);
+  await expect.poll(async () => page.locator(".symbolNode").count()).toBe(611);
 });
 
 test("unmeasured-only filtering does not crash the treemap", async ({ page }) => {

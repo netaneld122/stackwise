@@ -459,6 +459,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
               rootId={effectiveGraphRoot}
               direction={graphDirection}
               nodeLimit={effectiveNodeLimit}
+              nodeLimitMax={graphNodeLimitMax}
               edgeKinds={edgeKinds}
               layout={graphLayout}
               selectedId={selectedId}
@@ -467,6 +468,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
               onShowCallers={showCallersForSymbol}
               onShowWorstBranch={showWorstBranchHighlight}
               onShowInTreemap={showSymbolInTreemap}
+              onSetNodeLimit={setNodeLimit}
             />
           )}
         </div>
@@ -1850,6 +1852,7 @@ type FlowData = {
   dimmed: boolean;
   branchHighlighted: boolean;
   onSymbolContextMenu?: (event: ReactMouseEvent<HTMLElement>, graphNode: GraphNode) => void;
+  onRevealMore?: (hiddenCount: number) => void;
 };
 type StackwiseFlowNode = FlowNode<FlowData, "stackwise">;
 type FlowEdgeData = {
@@ -1871,6 +1874,7 @@ function CallGraphView({
   rootId,
   direction,
   nodeLimit,
+  nodeLimitMax,
   edgeKinds,
   layout,
   selectedId,
@@ -1879,12 +1883,14 @@ function CallGraphView({
   onShowCallers,
   onShowWorstBranch,
   onShowInTreemap,
+  onSetNodeLimit,
 }: {
   report: StackwiseReport;
   symbols: SymbolReport[];
   rootId: number | null;
   direction: GraphDirection;
   nodeLimit: number;
+  nodeLimitMax: number;
   edgeKinds: ReadonlySet<EdgeKind>;
   layout: GraphLayout;
   selectedId: number | null;
@@ -1893,6 +1899,7 @@ function CallGraphView({
   onShowCallers: (symbolId: number) => void;
   onShowWorstBranch: (symbolId: number) => void;
   onShowInTreemap: (symbolId: number) => void;
+  onSetNodeLimit: (nodeLimit: number) => void;
 }) {
   const { setSelectedId } = useStackwiseStore();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; symbol: SymbolReport } | null>(null);
@@ -1935,9 +1942,10 @@ function CallGraphView({
       data: {
         ...node.data,
         onSymbolContextMenu: openSymbolContextMenu,
+        onRevealMore: (hiddenCount) => onSetNodeLimit(clamp(nodeLimit + hiddenCount, 1, nodeLimitMax)),
       },
     })),
-    [nodes, openSymbolContextMenu],
+    [nodeLimit, nodeLimitMax, nodes, onSetNodeLimit, openSymbolContextMenu],
   );
   const fitKey = useMemo(
     () => `${focused.rootId}:${direction}:${highlightedWorstBranchRootId ?? "all"}:${layout}:${[...edgeKinds].sort().join(",")}:${symbols.length}`,
@@ -1984,7 +1992,7 @@ function CallGraphView({
     <div className="graphShell">
       {focused.hiddenNodeCount > 0 ? (
         <div className="graphNotice">
-          {focused.hiddenNodeCount.toLocaleString()} reachable symbols pruned by the node limit. Cut markers show where hidden branches continue.
+          {focused.hiddenNodeCount.toLocaleString()} reachable symbols pruned by the node limit. Reveal more markers raise the same node budget.
         </div>
       ) : null}
       <ReactFlow
@@ -2100,10 +2108,22 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
   const node = data.graphNode;
   const handles = handlePositions(data.layout);
   if (!("symbol" in node)) {
+    const isReveal = node.markerKind === "limit" && node.hiddenCount != null;
     return (
       <div
-        className={`callNode boundaryNode${node.markerKind === "limit" ? " limitBoundary" : ""}`}
-        title={node.detail}
+        className={`callNode boundaryNode${isReveal ? " limitBoundary revealBoundary" : ""}`}
+        role={isReveal ? "button" : undefined}
+        tabIndex={isReveal ? 0 : undefined}
+        title={isReveal ? "Reveal more nodes by increasing the graph node budget" : node.detail}
+        onClick={isReveal ? () => data.onRevealMore?.(node.hiddenCount!) : undefined}
+        onKeyDown={isReveal
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                data.onRevealMore?.(node.hiddenCount!);
+              }
+            }
+          : undefined}
       >
         <Handle type="target" position={handles.target} />
         <Handle type="source" position={handles.source} />
