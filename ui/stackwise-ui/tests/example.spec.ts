@@ -483,6 +483,13 @@ test("renders call graph minimap nodes for larger reports", async ({ page }) => 
   expect(deltaX).toBeLessThan(28);
   expect(deltaY).toBeGreaterThan(9);
   expect(deltaY).toBeLessThan(17);
+  await page.mouse.move(afterDrag.x + afterDrag.width / 2, afterDrag.y + afterDrag.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(afterDrag.x + afterDrag.width / 2 + 1200, afterDrag.y + afterDrag.height / 2 + 1200, { steps: 8 });
+  await page.mouse.up();
+  const afterLimitDrag = await minimapMaskScreenRect(page);
+  expect(Math.abs(afterLimitDrag.width - afterDrag.width)).toBeLessThan(1);
+  expect(Math.abs(afterLimitDrag.height - afterDrag.height)).toBeLessThan(1);
 });
 
 test("call graph node slider is the only branch limit and preserves the viewport", async ({ page }) => {
@@ -653,7 +660,7 @@ test("unmeasured-only filtering does not crash the treemap", async ({ page }) =>
   await expect(page.getByText("No positive own-frame values match the current filters.")).toBeVisible();
 });
 
-function symbolFixture(id: number, demangled: string, modulePath: string[]) {
+function symbolFixture(id: number, demangled: string, modulePath: string[], own = 8 + (id % 24)) {
   return {
     id,
     name: demangled,
@@ -662,8 +669,8 @@ function symbolFixture(id: number, demangled: string, modulePath: string[]) {
     module_path: modulePath,
     address: id + 1,
     size_bytes: 10,
-    own_frame: { bytes: 8 + (id % 24), status: "known", evidence_source: "elf_stack_sizes" },
-    worst_path: { bytes: 8 + (id % 24), status: "known", path: [id] },
+    own_frame: { bytes: own, status: "known", evidence_source: "elf_stack_sizes" },
+    worst_path: { bytes: own, status: "known", path: [id] },
     confidence: "exact",
     evidence: [],
     unresolved_reasons: [],

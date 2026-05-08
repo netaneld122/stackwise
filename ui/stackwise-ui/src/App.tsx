@@ -25,6 +25,7 @@ import {
   Position,
   ReactFlow,
   getSmoothStepPath,
+  type CoordinateExtent,
   type Edge as FlowEdge,
   type EdgeProps,
   type FitViewOptions,
@@ -1862,6 +1863,7 @@ const edgeTypes = { stackwise: StackwiseGraphEdge };
 const GRAPH_CONTEXT_MENU_WIDTH = 190;
 const GRAPH_CONTEXT_MENU_HEIGHT = 172;
 const GRAPH_CONTEXT_MENU_GAP = 8;
+const GRAPH_WORKSPACE_MARGIN = 720;
 
 function CallGraphView({
   report,
@@ -1908,7 +1910,7 @@ function CallGraphView({
     () => worstPathGraphSlice(focused.nodes, focused.edges, highlightedWorstBranchRootId),
     [focused.edges, focused.nodes, highlightedWorstBranchRootId],
   );
-  const { nodes, edges } = useMemo(
+  const { nodes, edges, extent } = useMemo(
     () => layoutFlowGraph(visibleGraph.nodes, visibleGraph.edges, report, selectedId, layout, highlightedWorstBranchRootId),
     [highlightedWorstBranchRootId, layout, report, selectedId, visibleGraph],
   );
@@ -1995,6 +1997,7 @@ function CallGraphView({
         fitViewOptions={rootFitViewOptions}
         minZoom={0.2}
         maxZoom={1.6}
+        translateExtent={extent}
         nodesDraggable={false}
         onPaneClick={() => setContextMenu(null)}
         onPaneContextMenu={(event) => {
@@ -2028,6 +2031,7 @@ function CallGraphView({
         <FlowControls showInteractive={false} />
         {nodes.length > 8 ? (
           <TightMiniMap
+            extent={extent}
             onNodeClick={(node) => {
               const graphNode = node.data.graphNode;
               if ("symbol" in graphNode) setSelectedId(graphNode.symbol.id);
@@ -2172,7 +2176,13 @@ function StackwiseGraphEdge({
   );
 }
 
-function TightMiniMap({ onNodeClick }: { onNodeClick: (node: StackwiseFlowNode) => void }) {
+function TightMiniMap({
+  extent,
+  onNodeClick,
+}: {
+  extent: CoordinateExtent;
+  onNodeClick: (node: StackwiseFlowNode) => void;
+}) {
   const flow = useReactFlow<StackwiseFlowNode, StackwiseFlowEdge>();
   const dragState = useRef<{
     pointerId: number;
@@ -2213,12 +2223,18 @@ function TightMiniMap({ onNodeClick }: { onNodeClick: (node: StackwiseFlowNode) 
     const state = dragState.current;
     const pointer = pointerToFlow(event);
     if (!state || !pointer) return;
-    const nextX = pointer.x - state.offsetX;
-    const nextY = pointer.y - state.offsetY;
+    const visible = visibleFlowRect(state.zoom);
+    const next = clampViewportTopLeft(
+      pointer.x - state.offsetX,
+      pointer.y - state.offsetY,
+      visible.width,
+      visible.height,
+      extent,
+    );
     void flow.setViewport(
       {
-        x: -nextX * state.zoom,
-        y: -nextY * state.zoom,
+        x: -next.x * state.zoom,
+        y: -next.y * state.zoom,
         zoom: state.zoom,
       },
       { duration: 0 },
@@ -2305,6 +2321,26 @@ function TightMiniMap({ onNodeClick }: { onNodeClick: (node: StackwiseFlowNode) 
   );
 }
 
+function clampViewportTopLeft(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  extent: CoordinateExtent,
+): { x: number; y: number } {
+  const [[minX, minY], [maxX, maxY]] = extent;
+  return {
+    x: clampAxisToExtent(x, width, minX, maxX),
+    y: clampAxisToExtent(y, height, minY, maxY),
+  };
+}
+
+function clampAxisToExtent(value: number, visibleSize: number, min: number, max: number): number {
+  const maxTopLeft = max - visibleSize;
+  if (maxTopLeft < min) return (min + max - visibleSize) / 2;
+  return clamp(value, min, maxTopLeft);
+}
+
 function layoutFlowGraph(
   graphNodes: GraphNode[],
   graphEdges: ReturnType<typeof buildFocusedCallGraph>["edges"],
@@ -2312,7 +2348,7 @@ function layoutFlowGraph(
   selectedId: number | null,
   layout: GraphLayout,
   highlightedWorstBranchRootId: number | null,
-): { nodes: StackwiseFlowNode[]; edges: StackwiseFlowEdge[] } {
+): { nodes: StackwiseFlowNode[]; edges: StackwiseFlowEdge[]; extent: CoordinateExtent } {
   const graph = new dagre.graphlib.Graph();
   graph.setDefaultEdgeLabel(() => ({}));
   graph.setGraph(layoutGraphOptions(layout));
@@ -2371,7 +2407,27 @@ function layoutFlowGraph(
     className: `callEdge ${edge.kind}`,
   }));
 
-  return { nodes, edges };
+  return { nodes, edges, extent: graphWorkspaceExtent(nodes) };
+}
+
+function graphWorkspaceExtent(nodes: StackwiseFlowNode[]): CoordinateExtent {
+  if (!nodes.length) return [[-1000, -1000], [1000, 1000]];
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const node of nodes) {
+    const width = node.width ?? node.measured?.width ?? 0;
+    const height = node.height ?? node.measured?.height ?? 0;
+    minX = Math.min(minX, node.position.x);
+    minY = Math.min(minY, node.position.y);
+    maxX = Math.max(maxX, node.position.x + width);
+    maxY = Math.max(maxY, node.position.y + height);
+  }
+  return [
+    [minX - GRAPH_WORKSPACE_MARGIN, minY - GRAPH_WORKSPACE_MARGIN],
+    [maxX + GRAPH_WORKSPACE_MARGIN, maxY + GRAPH_WORKSPACE_MARGIN],
+  ];
 }
 
 function worstPathGraphSlice(
