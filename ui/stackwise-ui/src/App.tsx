@@ -314,7 +314,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
       expandedCallerIds: [...expandedCallerSet],
       expandedCalleeIds: [...expandedCalleeSet],
       highlightBranchRootId: null,
-      revealFocusId: ownerId,
+      revealFocusId: null,
     };
   });
   const showWorstBranchHighlight = (symbolId: number) => commitGraphNavigation((current) => ({

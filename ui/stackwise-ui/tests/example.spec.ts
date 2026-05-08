@@ -331,11 +331,15 @@ async function expectHoverAffordance(button: Locator) {
 }
 
 async function graphZoom(page: Page): Promise<number> {
+  return (await graphViewport(page)).zoom;
+}
+
+async function graphViewport(page: Page): Promise<{ x: number; y: number; zoom: number }> {
   return page.locator(".react-flow__viewport").evaluate((node) => {
     const transform = getComputedStyle(node).transform;
-    if (!transform || transform === "none") return 1;
+    if (!transform || transform === "none") return { x: 0, y: 0, zoom: 1 };
     const matrix = new DOMMatrixReadOnly(transform);
-    return matrix.a;
+    return { x: matrix.e, y: matrix.f, zoom: matrix.a };
   });
 }
 
@@ -473,8 +477,13 @@ test("call graph expands truncated branches with reveal-more markers", async ({ 
   await expect(reveal).toHaveCount(1);
   await expect(reveal).toContainText("+4 callees");
 
+  const beforeRevealViewport = await graphViewport(page);
   await reveal.click();
   await expect(page.locator('.symbolNode[title="demo::f3"]')).toBeVisible();
+  const afterRevealViewport = await graphViewport(page);
+  expect(Math.abs(afterRevealViewport.zoom - beforeRevealViewport.zoom)).toBeLessThan(0.001);
+  expect(Math.abs(afterRevealViewport.x - beforeRevealViewport.x)).toBeLessThan(0.001);
+  expect(Math.abs(afterRevealViewport.y - beforeRevealViewport.y)).toBeLessThan(0.001);
   await expect(page.locator(".revealBoundary")).toContainText("+3 callees");
   await expect(page.getByRole("button", { name: "Undo graph navigation" })).toBeEnabled();
   await page.getByRole("button", { name: "Undo graph navigation" }).click();
