@@ -21,7 +21,6 @@ import {
   EdgeLabelRenderer,
   Handle,
   MarkerType,
-  MiniMap,
   Position,
   ReactFlow,
   getSmoothStepPath,
@@ -32,6 +31,7 @@ import {
   type Node as FlowNode,
   type NodeProps,
   useReactFlow,
+  useViewport,
 } from "@xyflow/react";
 import {
   Copy,
@@ -2058,6 +2058,7 @@ function CallGraphView({
         {nodes.length > 8 ? (
           <TightMiniMap
             extent={extent}
+            nodes={nodes}
             onNodeClick={(node) => {
               const graphNode = node.data.graphNode;
               if ("symbol" in graphNode) setSelectedId(graphNode.symbol.id);
@@ -2216,37 +2217,46 @@ function StackwiseGraphEdge({
 
 function TightMiniMap({
   extent,
+  nodes,
   onNodeClick,
 }: {
   extent: CoordinateExtent;
+  nodes: StackwiseFlowNode[];
   onNodeClick: (node: StackwiseFlowNode) => void;
 }) {
   const flow = useReactFlow<StackwiseFlowNode, StackwiseFlowEdge>();
+  const viewport = useViewport();
   const dragState = useRef<{
     pointerId: number;
     offsetX: number;
     offsetY: number;
     zoom: number;
   } | null>(null);
+  const width = 248;
+  const height = 168;
+  const [[minX, minY], [maxX, maxY]] = extent;
+  const extentWidth = Math.max(1, maxX - minX);
+  const extentHeight = Math.max(1, maxY - minY);
+
+  const toMiniX = (x: number) => ((x - minX) / extentWidth) * width;
+  const toMiniY = (y: number) => ((y - minY) / extentHeight) * height;
 
   const pointerToFlow = (event: PointerEvent | ReactPointerEvent<HTMLElement>): { x: number; y: number } | null => {
     const svg = (event.target instanceof Element
       ? event.target.closest<SVGSVGElement>(".react-flow__minimap-svg")
       : null);
     if (!svg) return null;
-    const viewBox = svg.viewBox.baseVal;
     const rect = svg.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0 || viewBox.width <= 0 || viewBox.height <= 0) return null;
+    if (rect.width <= 0 || rect.height <= 0) return null;
     return {
-      x: viewBox.x + ((event.clientX - rect.left) / rect.width) * viewBox.width,
-      y: viewBox.y + ((event.clientY - rect.top) / rect.height) * viewBox.height,
+      x: minX + ((event.clientX - rect.left) / rect.width) * extentWidth,
+      y: minY + ((event.clientY - rect.top) / rect.height) * extentHeight,
     };
   };
 
   const visibleFlowRect = (zoom: number) => {
     const flowElement = document.querySelector<HTMLElement>(".graphShell .react-flow");
     const rect = flowElement?.getBoundingClientRect();
-    const viewport = flow.getViewport();
     const width = (rect?.width ?? 0) / zoom;
     const height = (rect?.height ?? 0) / zoom;
     return {
@@ -2256,6 +2266,15 @@ function TightMiniMap({
       height,
     };
   };
+  const visible = visibleFlowRect(viewport.zoom);
+  const actualMask = {
+    x: toMiniX(visible.x),
+    y: toMiniY(visible.y),
+    width: (visible.width / extentWidth) * width,
+    height: (visible.height / extentHeight) * height,
+  };
+  const mask = minimumScreenRect(actualMask, width, height, 30, 22);
+  const maskPath = `M0,0h${width}v${height}h${-width}z M${roundSvg(mask.x)},${roundSvg(mask.y)}h${roundSvg(mask.width)}v${roundSvg(mask.height)}h${roundSvg(-mask.width)}z`;
 
   const dragMinimap = (event: PointerEvent | ReactPointerEvent<HTMLElement>) => {
     const state = dragState.current;
@@ -2338,25 +2357,71 @@ function TightMiniMap({
 
   return (
     <div className="tightMiniMapDragLayer">
-      <MiniMap<StackwiseFlowNode>
-        ariaLabel="Call graph minimap"
-        className="callGraphMiniMap"
-        nodeColor={(node) => node.data.color}
-        nodeStrokeColor={(node) => (node.data.selected ? "var(--selected-outline)" : "var(--minimap-node-stroke)")}
-        nodeClassName={(node) => `miniNode ${node.data.graphNode.relation}`}
-        nodeBorderRadius={7}
-        nodeStrokeWidth={2}
-        bgColor="var(--minimap-bg)"
-        maskColor="var(--minimap-mask)"
-        maskStrokeColor="var(--accent)"
-        maskStrokeWidth={3}
-        offsetScale={8}
-        pannable={false}
-        style={{ width: 248, height: 168 }}
-        onNodeClick={(_, node) => onNodeClick(node)}
-      />
+      <div className="callGraphMiniMap" data-testid="rf__minimap">
+        <svg className="react-flow__minimap-svg" role="img" aria-labelledby="call-graph-minimap-title" viewBox={`0 0 ${width} ${height}`}>
+          <title id="call-graph-minimap-title">Call graph minimap</title>
+          {nodes.map((node) => {
+            const nodeWidth = node.width ?? node.measured?.width ?? 0;
+            const nodeHeight = node.height ?? node.measured?.height ?? 0;
+            const centerX = toMiniX(node.position.x + nodeWidth / 2);
+            const centerY = toMiniY(node.position.y + nodeHeight / 2);
+            const isRoot = node.data.graphNode.relation === "root";
+            const isLimit = !("symbol" in node.data.graphNode) && node.data.graphNode.markerKind === "limit";
+            const size = isRoot ? 7 : isLimit ? 5.4 : 3.5;
+            return (
+              <rect
+                className={`react-flow__minimap-node miniNode ${node.data.graphNode.relation}${isRoot ? " root" : ""}`}
+                fill={isLimit ? "#d97706" : node.data.color}
+                height={size}
+                key={node.id}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onNodeClick(node);
+                }}
+                rx={Math.min(2, size / 2)}
+                stroke="var(--minimap-node-stroke)"
+                strokeWidth={isRoot ? 1.3 : 0.75}
+                width={size}
+                x={clamp(centerX - size / 2, 0, width - size)}
+                y={clamp(centerY - size / 2, 0, height - size)}
+              />
+            );
+          })}
+          <path className="react-flow__minimap-mask" d={maskPath} fillRule="evenodd" pointerEvents="none" />
+          <rect
+            className="react-flow__minimap-viewport"
+            height={mask.height}
+            pointerEvents="none"
+            rx={4}
+            width={mask.width}
+            x={mask.x}
+            y={mask.y}
+          />
+        </svg>
+      </div>
     </div>
   );
+}
+
+function minimumScreenRect(
+  rect: { x: number; y: number; width: number; height: number },
+  boundsWidth: number,
+  boundsHeight: number,
+  minWidth: number,
+  minHeight: number,
+) {
+  const width = Math.min(boundsWidth, Math.max(minWidth, rect.width));
+  const height = Math.min(boundsHeight, Math.max(minHeight, rect.height));
+  return {
+    x: clamp(rect.x + rect.width / 2 - width / 2, 0, boundsWidth - width),
+    y: clamp(rect.y + rect.height / 2 - height / 2, 0, boundsHeight - height),
+    width,
+    height,
+  };
+}
+
+function roundSvg(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 
 function clampViewportTopLeft(
