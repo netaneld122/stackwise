@@ -505,6 +505,32 @@ test("renders call graph minimap nodes for larger reports", async ({ page }) => 
   expect(Math.abs(afterLimitDrag.height - afterDrag.height)).toBeLessThan(1);
 });
 
+test("does not label edges into indirect call boundary nodes", async ({ page }) => {
+  const symbols = [symbolFixture(0, "demo::main", ["demo"])];
+  const edges = [
+    {
+      caller: 0,
+      callee: null,
+      target_address: null,
+      kind: "indirect_call",
+      confidence: "medium",
+    },
+  ];
+
+  await page.route("/report.json", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(reportFixture(symbols, edges)),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Call Graph" }).click();
+  await expect(page.locator(".boundaryNode")).toContainText("Indirect call");
+  await expect(page.locator(".callEdge.indirect_call")).toBeVisible();
+  await expect(page.locator(".callEdgeLabel.indirect_call")).toHaveCount(0);
+});
+
 test("call graph node slider is the only branch limit and preserves the viewport", async ({ page }) => {
   const symbols = Array.from({ length: 7 }, (_, id) =>
     symbolFixture(id, id === 0 ? "demo::main" : `demo::f${id}`, ["demo"]),
@@ -713,7 +739,7 @@ function edgeFixture(caller: number, callee: number) {
 
 function reportFixture(
   symbols: ReturnType<typeof symbolFixture>[],
-  edges: Array<ReturnType<typeof edgeFixture>>,
+  edges: Array<ReturnType<typeof edgeFixture> | NullableEdgeFixture>,
 ) {
   return {
     schema_version: "0.1.0",
@@ -752,3 +778,11 @@ function reportFixture(
     diagnostics: [],
   };
 }
+
+type NullableEdgeFixture = {
+  caller: number;
+  callee: number | null;
+  target_address: number | null;
+  kind: string;
+  confidence: string;
+};

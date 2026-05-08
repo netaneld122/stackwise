@@ -2670,6 +2670,7 @@ function graphEdgeLabel(edge: ReturnType<typeof buildFocusedCallGraph>["edges"][
   const delta = edge.addedStackBytes == null ? null : `+${formatBytes(edge.addedStackBytes)}`;
   if (edge.kind === "tail_call") return delta ? `${delta} tail` : "tail";
   if (edge.kind === "direct_call") return delta ?? "unmeasured";
+  if (edge.kind === "indirect_call") return "";
   return edgeKindShortLabel(edge.kind);
 }
 
