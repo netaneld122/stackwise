@@ -1593,6 +1593,22 @@ dd {
   opacity: 0.2;
 }
 
+.callEdgeLabel {
+  position: absolute;
+  z-index: 3;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--graph-edge-label-ink), transparent 78%);
+  border-radius: 999px;
+  background: var(--graph-edge-label-bg);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
+  color: var(--graph-edge-label-ink);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.1;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
 .react-flow__edge-textbg {
   fill: var(--graph-edge-label-bg);
 }

@@ -16,13 +16,17 @@ import { createPortal } from "react-dom";
 import * as dagre from "@dagrejs/dagre";
 import {
   Background,
+  BaseEdge,
   Controls as FlowControls,
+  EdgeLabelRenderer,
   Handle,
   MarkerType,
   MiniMap,
   Position,
   ReactFlow,
+  getSmoothStepPath,
   type Edge as FlowEdge,
+  type EdgeProps,
   type FitViewOptions,
   type Node as FlowNode,
   type NodeProps,
@@ -50,6 +54,7 @@ import {
   chooseDefaultRoot,
   DEFAULT_CALL_GRAPH_NODE_LIMIT,
   symbolNodeId,
+  type GraphEdgeKind,
   type GraphNode,
   type GraphRevealDirection,
 } from "./callGraph";
@@ -1827,8 +1832,14 @@ type FlowData = {
   onRevealMore?: (direction: GraphRevealDirection, ownerId: number) => void;
 };
 type StackwiseFlowNode = FlowNode<FlowData, "stackwise">;
+type FlowEdgeData = {
+  label: string;
+  kind: GraphEdgeKind;
+};
+type StackwiseFlowEdge = FlowEdge<FlowEdgeData, "stackwise">;
 
 const nodeTypes = { stackwise: StackwiseGraphNode };
+const edgeTypes = { stackwise: StackwiseGraphEdge };
 const GRAPH_CONTEXT_MENU_WIDTH = 190;
 const GRAPH_CONTEXT_MENU_HEIGHT = 132;
 const GRAPH_CONTEXT_MENU_GAP = 8;
@@ -1976,6 +1987,7 @@ function CallGraphView({
         nodes={interactiveNodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         fitView
         fitViewOptions={rootFitViewOptions}
         minZoom={0.2}
@@ -2120,8 +2132,47 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
   );
 }
 
+function StackwiseGraphEdge({
+  sourceX,
+  sourceY,
+  sourcePosition,
+  targetX,
+  targetY,
+  targetPosition,
+  markerEnd,
+  data,
+}: EdgeProps<StackwiseFlowEdge>) {
+  const [path, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+  const label = data?.label;
+
+  return (
+    <>
+      <BaseEdge path={path} markerEnd={markerEnd} />
+      {label ? (
+        <EdgeLabelRenderer>
+          <div
+            className={`callEdgeLabel ${data?.kind ?? "direct_call"}`}
+            style={{
+              transform: `translate(-50%, 8px) translate(${labelX}px, ${labelY}px)`,
+            }}
+          >
+            {label}
+          </div>
+        </EdgeLabelRenderer>
+      ) : null}
+    </>
+  );
+}
+
 function TightMiniMap({ onNodeClick }: { onNodeClick: (node: StackwiseFlowNode) => void }) {
-  const flow = useReactFlow<StackwiseFlowNode, FlowEdge>();
+  const flow = useReactFlow<StackwiseFlowNode, StackwiseFlowEdge>();
   const dragState = useRef<{
     pointerId: number;
     offsetX: number;
@@ -2308,12 +2359,15 @@ function layoutFlowGraph(
     };
   });
 
-  const edges = graphEdges.map<FlowEdge>((edge) => ({
+  const edges = graphEdges.map<StackwiseFlowEdge>((edge) => ({
     id: edge.id,
     source: edge.source,
     target: edge.target,
-    type: "smoothstep",
-    label: graphEdgeLabel(edge),
+    type: "stackwise",
+    data: {
+      label: graphEdgeLabel(edge),
+      kind: edge.kind,
+    },
     markerEnd: { type: MarkerType.ArrowClosed },
     className: `callEdge ${edge.kind}`,
   }));
