@@ -1415,11 +1415,30 @@ dd {
 .callNode {
   position: relative;
   overflow: hidden;
+  animation: graphNodeAppear 120ms ease-out;
   border: 1px solid var(--graph-panel-border);
   border-radius: 8px;
   background: var(--graph-panel-bg);
   color: var(--heading);
   box-shadow: 0 16px 34px rgba(15, 23, 42, 0.12);
+}
+
+@keyframes graphNodeAppear {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .callNode {
+    animation: none;
+  }
 }
 
 .symbolNode {
