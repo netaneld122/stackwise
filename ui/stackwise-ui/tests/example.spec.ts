@@ -285,6 +285,14 @@ test("renders the application shell", async ({ page }) => {
   await redoGraph.click();
   await expect(graphFocusStatus).toContainText("Showing callers");
   await expect(page.locator(".symbolNode.root")).toContainText("leaf");
+  await page.locator(".symbolNode.root").click({ button: "right" });
+  await expect(page.getByRole("menuitem", { name: "Unset as root" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Unset as root" }).click();
+  await expect(graphFocusStatus).toContainText("Default root");
+  await expect(page.locator(".symbolNode.root")).toContainText("main");
+  await page.locator(".symbolNode.root").click({ button: "right" });
+  await expect(page.getByRole("menuitem", { name: "Original root" })).toBeDisabled();
+  await page.keyboard.press("Escape");
   await leafNode.click();
   await expect(page.getByText("Optimize with AI")).toBeVisible();
   await expect(page.getByRole("button", { name: "Generate markdown" })).toBeVisible();

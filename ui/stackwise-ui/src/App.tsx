@@ -320,6 +320,14 @@ function ReportView({ report }: { report: StackwiseReport }) {
     highlightBranchRootId: null,
     revealOwnerIds: [],
   }));
+  const unsetGraphRoot = () => commitGraphNavigation((current) => ({
+    ...current,
+    rootId: defaultGraphRoot,
+    mode: "default",
+    actionSymbolId: null,
+    highlightBranchRootId: null,
+    revealOwnerIds: [],
+  }));
   const showCallersForSymbol = (symbolId: number) => {
     commitGraphNavigation((current) => ({
       ...current,
@@ -473,6 +481,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
               report={report}
               symbols={symbols}
               rootId={effectiveGraphRoot}
+              defaultRootId={defaultGraphRoot}
               direction={graphDirection}
               nodeLimit={effectiveNodeLimit}
               edgeKinds={edgeKinds}
@@ -482,6 +491,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
               highlightedWorstBranchRootId={graphState.highlightBranchRootId}
               revealOwnerIds={revealOwnerIds}
               onPivotSymbol={pivotToSymbol}
+              onUnsetRoot={unsetGraphRoot}
               onShowCallers={showCallersForSymbol}
               onShowWorstBranch={showWorstBranchHighlight}
               onShowInTreemap={showSymbolInTreemap}
@@ -1932,6 +1942,7 @@ function CallGraphView({
   report,
   symbols,
   rootId,
+  defaultRootId,
   direction,
   nodeLimit,
   edgeKinds,
@@ -1941,6 +1952,7 @@ function CallGraphView({
   highlightedWorstBranchRootId,
   revealOwnerIds,
   onPivotSymbol,
+  onUnsetRoot,
   onShowCallers,
   onShowWorstBranch,
   onShowInTreemap,
@@ -1949,6 +1961,7 @@ function CallGraphView({
   report: StackwiseReport;
   symbols: SymbolReport[];
   rootId: number | null;
+  defaultRootId: number | null;
   direction: GraphDirection;
   nodeLimit: number;
   edgeKinds: ReadonlySet<EdgeKind>;
@@ -1958,6 +1971,7 @@ function CallGraphView({
   highlightedWorstBranchRootId: number | null;
   revealOwnerIds: ReadonlySet<number>;
   onPivotSymbol: (symbolId: number) => void;
+  onUnsetRoot: () => void;
   onShowCallers: (symbolId: number) => void;
   onShowWorstBranch: (symbolId: number) => void;
   onShowInTreemap: (symbolId: number) => void;
@@ -2056,6 +2070,9 @@ function CallGraphView({
     return <div className="empty">No symbols match the current filters.</div>;
   }
 
+  const contextMenuIsRoot = contextMenu?.symbol.id === rootId;
+  const contextMenuIsDefaultRoot = contextMenu?.symbol.id === defaultRootId;
+
   return (
     <div className="graphShell">
       {focused.hiddenNodeCount > 0 ? (
@@ -2137,16 +2154,33 @@ function CallGraphView({
               onClick={(event) => event.stopPropagation()}
               onContextMenu={(event) => event.preventDefault()}
             >
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  onPivotSymbol(contextMenu.symbol.id);
-                  setContextMenu(null);
-                }}
-              >
-                <Pin size={14} /> Set as root
-              </button>
+              {contextMenuIsRoot && !contextMenuIsDefaultRoot ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onUnsetRoot();
+                    setContextMenu(null);
+                  }}
+                >
+                  <Pin size={14} /> Unset as root
+                </button>
+              ) : contextMenuIsDefaultRoot ? (
+                <button type="button" role="menuitem" disabled>
+                  <Pin size={14} /> Original root
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    onPivotSymbol(contextMenu.symbol.id);
+                    setContextMenu(null);
+                  }}
+                >
+                  <Pin size={14} /> Set as root
+                </button>
+              )}
               <button
                 type="button"
                 role="menuitem"
