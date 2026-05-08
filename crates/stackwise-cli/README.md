@@ -15,4 +15,10 @@ Use `--serve` when you want the local URL without opening a browser:
 cargo stackwise --release --serve
 ```
 
+Already have an executable? Analyze and open it directly:
+
+```powershell
+stackwise analyze .\program.exe --open
+```
+
 The analysis engine lives in `stackwise-core`.

@@ -80,6 +80,12 @@ pub struct AnalyzeCommand {
     pub json: Option<Utf8PathBuf>,
 
     #[arg(long)]
+    pub open: bool,
+
+    #[arg(long, conflicts_with = "open")]
+    pub serve: bool,
+
+    #[arg(long)]
     pub workspace_root: Option<Utf8PathBuf>,
 
     #[arg(long)]
@@ -169,5 +175,36 @@ mod tests {
 
         assert_eq!(command.report.as_str(), "report.json");
         assert!(command.serve);
+    }
+
+    #[test]
+    fn analyze_command_open_mode_parses() {
+        let cli = Cli::try_parse_from(["stackwise", "analyze", "app.exe", "--open"]).unwrap();
+        let Some(Commands::Analyze(command)) = cli.command else {
+            panic!("expected analyze command");
+        };
+
+        assert_eq!(command.artifact.as_str(), "app.exe");
+        assert!(command.open);
+        assert!(!command.serve);
+    }
+
+    #[test]
+    fn analyze_command_serve_mode_parses() {
+        let cli = Cli::try_parse_from(["stackwise", "analyze", "app.exe", "--serve"]).unwrap();
+        let Some(Commands::Analyze(command)) = cli.command else {
+            panic!("expected analyze command");
+        };
+
+        assert_eq!(command.artifact.as_str(), "app.exe");
+        assert!(!command.open);
+        assert!(command.serve);
+    }
+
+    #[test]
+    fn analyze_command_serve_conflicts_with_open() {
+        assert!(
+            Cli::try_parse_from(["stackwise", "analyze", "app.exe", "--open", "--serve"]).is_err()
+        );
     }
 }

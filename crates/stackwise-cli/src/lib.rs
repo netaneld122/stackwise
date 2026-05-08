@@ -27,11 +27,22 @@ where
 
     match cli.command {
         Some(Commands::Analyze(command)) => {
-            let report = match command.json.as_deref() {
-                Some(path) => analyze_to_file(&command.artifact, command.build_info(), path)?,
-                None => analyze_to_stdout(&command.artifact, command.build_info())?,
-            };
-            print_summary(&report);
+            if command.open || command.serve {
+                let report_path = command
+                    .json
+                    .clone()
+                    .unwrap_or_else(|| default_artifact_report_path(&command.artifact));
+                let report =
+                    analyze_to_file(&command.artifact, command.build_info(), &report_path)?;
+                print_summary(&report);
+                server::serve_report(report_path, command.open)?;
+            } else {
+                let report = match command.json.as_deref() {
+                    Some(path) => analyze_to_file(&command.artifact, command.build_info(), path)?,
+                    None => analyze_to_stdout(&command.artifact, command.build_info())?,
+                };
+                print_summary(&report);
+            }
         }
         Some(Commands::Open(command)) => {
             server::serve_report(command.report, !command.serve)?;
@@ -80,6 +91,27 @@ fn write_report_to_file(report: &StackwiseReport, path: &Utf8Path) -> anyhow::Re
     fs::write(path, serde_json::to_vec_pretty(report)?)
         .with_context(|| format!("failed to write report {path}"))?;
     Ok(())
+}
+
+pub(crate) fn default_artifact_report_path(artifact: &Utf8Path) -> Utf8PathBuf {
+    let artifact_text = artifact.as_str();
+    let has_trailing_separator = artifact_text.ends_with('/') || artifact_text.ends_with('\\');
+    let report_name = if has_trailing_separator {
+        "report.stackwise.json".to_owned()
+    } else {
+        artifact
+            .file_stem()
+            .filter(|stem| !stem.is_empty())
+            .map(|stem| format!("{stem}.stackwise.json"))
+            .unwrap_or_else(|| "report.stackwise.json".to_owned())
+    };
+    if has_trailing_separator {
+        return artifact.join(report_name);
+    }
+    artifact
+        .parent()
+        .map(|parent| parent.join(&report_name))
+        .unwrap_or_else(|| Utf8PathBuf::from(report_name))
 }
 
 fn read_report(path: &Utf8Path) -> anyhow::Result<StackwiseReport> {
@@ -263,5 +295,31 @@ pub(crate) fn exact_mode_from_arg(arg: ExactModeArg) -> ExactMode {
         ExactModeArg::Off => ExactMode::Off,
         ExactModeArg::Auto => ExactMode::Auto,
         ExactModeArg::Required => ExactMode::Required,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_artifact_report_path;
+    use camino::Utf8Path;
+
+    #[test]
+    fn default_artifact_report_path_uses_artifact_parent_and_stem() {
+        let artifact = Utf8Path::new(r"C:\tmp\app.exe");
+
+        assert_eq!(
+            default_artifact_report_path(artifact).as_str(),
+            r"C:\tmp\app.stackwise.json"
+        );
+    }
+
+    #[test]
+    fn default_artifact_report_path_falls_back_for_empty_stem() {
+        let artifact = Utf8Path::new(r"C:\tmp\");
+
+        assert_eq!(
+            default_artifact_report_path(artifact).as_str(),
+            r"C:\tmp\report.stackwise.json"
+        );
     }
 }

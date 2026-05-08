@@ -43,6 +43,8 @@ Use `--serve` instead of `--open` when you want Stackwise to print a local URL w
 ## CLI
 
 - `stackwise analyze <artifact> --json report.json`
+- `stackwise analyze <artifact> --open`
+- `stackwise analyze <artifact> --serve`
 - `cargo stackwise --release --open`
 - `cargo stackwise --release --serve`
 - `stackwise open report.json`
