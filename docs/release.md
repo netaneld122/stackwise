@@ -40,7 +40,7 @@ Run these manually only when intentionally releasing:
 cargo publish -p stackwise-core
 # wait for crates.io index propagation
 cargo publish -p stackwise
-git tag v0.1.0
+git tag v0.2.0
 git push origin main --tags
 ```
 
