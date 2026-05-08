@@ -1530,26 +1530,6 @@ dd {
   color: #d97706;
 }
 
-.revealBoundary {
-  width: 152px;
-  min-height: 58px;
-  cursor: pointer;
-  border-color: rgba(15, 118, 110, 0.58);
-  background: linear-gradient(180deg, rgba(20, 184, 166, 0.16), var(--graph-panel-bg));
-  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.12);
-}
-
-.revealBoundary:hover,
-.revealBoundary:focus-visible {
-  border-color: rgba(20, 184, 166, 0.86);
-  box-shadow: 0 13px 28px rgba(20, 184, 166, 0.2);
-  transform: translateY(-1px);
-}
-
-.revealBoundary strong {
-  color: #0f766e;
-}
-
 .boundaryNode strong {
   font-size: 12px;
 }
@@ -1580,11 +1560,6 @@ dd {
 .callEdge.limit path {
   stroke: #d97706;
   stroke-dasharray: 2 6;
-}
-
-.callEdge.reveal path {
-  stroke: #0f766e;
-  stroke-dasharray: 6 6;
 }
 
 .callEdge.dimmed path,

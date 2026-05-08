@@ -453,7 +453,7 @@ test("renders call graph minimap nodes for larger reports", async ({ page }) => 
   expect(deltaY).toBeLessThan(17);
 });
 
-test("call graph expands truncated branches with reveal-more markers", async ({ page }) => {
+test("call graph node slider is the only branch limit and preserves the viewport", async ({ page }) => {
   const symbols = Array.from({ length: 7 }, (_, id) =>
     symbolFixture(id, id === 0 ? "demo::main" : `demo::f${id}`, ["demo"]),
   );
@@ -472,23 +472,26 @@ test("call graph expands truncated branches with reveal-more markers", async ({ 
   await expect(page.getByRole("combobox", { name: "Callees" })).toHaveCount(0);
   await expect(page.locator(".symbolNode.root")).toContainText("demo::main");
   await expect(page.locator('.symbolNode[title="demo::f2"]')).toBeVisible();
+  await expect(page.locator('.symbolNode[title="demo::f6"]')).toBeVisible();
+
+  const nodeLimitSlider = page.getByLabel("Call graph node limit");
+  await expect(nodeLimitSlider).toHaveAttribute("max", "7");
+  await nodeLimitSlider.fill("3");
   await expect(page.locator('.symbolNode[title="demo::f3"]')).toHaveCount(0);
-  const reveal = page.locator(".revealBoundary").filter({ hasText: "Reveal more" });
-  await expect(reveal).toHaveCount(1);
-  await expect(reveal).toContainText("+4 callees");
+  await expect(page.locator(".limitBoundary")).toContainText("+4 hidden callees");
 
   const beforeRevealViewport = await graphViewport(page);
-  await reveal.click();
+  await nodeLimitSlider.fill("4");
   await expect(page.locator('.symbolNode[title="demo::f3"]')).toBeVisible();
   const afterRevealViewport = await graphViewport(page);
   expect(Math.abs(afterRevealViewport.zoom - beforeRevealViewport.zoom)).toBeLessThan(0.001);
   expect(Math.abs(afterRevealViewport.x - beforeRevealViewport.x)).toBeLessThan(0.001);
   expect(Math.abs(afterRevealViewport.y - beforeRevealViewport.y)).toBeLessThan(0.001);
-  await expect(page.locator(".revealBoundary")).toContainText("+3 callees");
+  await expect(page.locator(".limitBoundary")).toContainText("+3 hidden callees");
   await expect(page.getByRole("button", { name: "Undo graph navigation" })).toBeEnabled();
   await page.getByRole("button", { name: "Undo graph navigation" }).click();
   await expect(page.locator('.symbolNode[title="demo::f3"]')).toHaveCount(0);
-  await expect(page.locator(".revealBoundary")).toContainText("+4 callees");
+  await expect(page.locator(".limitBoundary")).toContainText("+4 hidden callees");
 });
 
 test("call graph node limit prunes huge graphs from the leaves and marks cut points", async ({ page }) => {

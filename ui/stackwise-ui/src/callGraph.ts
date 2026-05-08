@@ -9,19 +9,16 @@ import {
 
 export type GraphRelation = "caller" | "root" | "callee";
 export type GraphStackStatus = "known" | "unknown";
-export type GraphEdgeKind = EdgeKind | "limit" | "reveal";
-export type GraphRevealDirection = "caller" | "callee";
+export type GraphEdgeKind = EdgeKind | "limit";
+export type GraphDirection = "callers" | "callees";
 
 export const DEFAULT_CALL_GRAPH_NODE_LIMIT = 480;
 
 export interface GraphOptions {
   rootId: number | null;
-  callerDepth: number;
-  calleeDepth: number;
   maxNodes: number;
   edgeKinds: ReadonlySet<EdgeKind>;
-  expandedCallerIds?: ReadonlySet<number>;
-  expandedCalleeIds?: ReadonlySet<number>;
+  direction?: GraphDirection;
 }
 
 export interface GraphSymbolNode {
@@ -41,9 +38,8 @@ export interface GraphBoundaryNode {
   label: string;
   detail: string;
   ownerId: number;
-  relation: GraphRelation;
-  markerKind?: "limit" | "reveal";
-  revealDirection?: GraphRevealDirection;
+  relation: Exclude<GraphRelation, "root">;
+  markerKind?: "limit";
 }
 
 export type GraphNode = GraphSymbolNode | GraphBoundaryNode;
@@ -76,7 +72,7 @@ interface GraphIndex {
 interface PrunedGraph {
   nodeIds: Set<number>;
   hiddenNodeCount: number;
-  hiddenCalleesByOwner: Map<number, number>;
+  hiddenByOwner: Map<number, number>;
 }
 
 const SYMBOL_PREFIX = "s:";
@@ -126,13 +122,13 @@ export function buildFocusedCallGraph(
   if (rootId == null) return { rootId: null, nodes: [], edges: [], hiddenNodeCount: 0, reachableNodeCount: 0 };
   visibleIds.add(rootId);
   const index = buildGraphIndex(report, visibleIds, allSymbolsById);
+  const direction = options.direction ?? "callees";
+  const relation: Exclude<GraphRelation, "root"> = direction === "callers" ? "caller" : "callee";
 
   const reachableNodeIds = new Set<number>([rootId]);
   const relationById = new Map<number, GraphRelation>([[rootId, "root"]]);
   const depthById = new Map<number, number>([[rootId, 0]]);
   const graphEdges = new Map<string, GraphEdge>();
-  const expandedCallerIds = options.expandedCallerIds ?? new Set<number>();
-  const expandedCalleeIds = options.expandedCalleeIds ?? new Set<number>();
 
   const addSymbolNode = (id: number, relation: GraphRelation, depth: number) => {
     if (!visibleIds.has(id)) return false;
@@ -156,27 +152,20 @@ export function buildFocusedCallGraph(
     });
   };
 
-  walkCallers(rootId, options.callerDepth, expandedCallerIds, index, options.edgeKinds, (edge, depth) => {
-    if (edge.callee == null || !addSymbolNode(edge.caller, "caller", depth)) return false;
+  walkReachable(rootId, direction, index, options.edgeKinds, (edge, id, depth) => {
+    if (edge.callee == null || !addSymbolNode(id, relation, depth)) return false;
     return true;
   });
 
-  walkCallees(rootId, options.calleeDepth, expandedCalleeIds, index, options.edgeKinds, (edge, depth) => {
-    if (edge.callee == null) return false;
-    if (!addSymbolNode(edge.callee, "callee", depth)) return false;
-    return true;
-  });
-
-  const { nodeIds, hiddenNodeCount, hiddenCalleesByOwner } = pruneReachableGraph(
+  const { nodeIds, hiddenNodeCount, hiddenByOwner } = pruneReachableGraph(
     rootId,
     reachableNodeIds,
     depthById,
     index,
     options.edgeKinds,
     options.maxNodes,
+    direction,
   );
-  const revealCalleesByOwner = hiddenCalleeDepthCounts(reachableNodeIds, nodeIds, index, options.edgeKinds);
-  const revealCallersByOwner = hiddenCallerDepthCounts(reachableNodeIds, nodeIds, index, options.edgeKinds);
   const stackById = computeCumulativeStacks(rootId, nodeIds, relationById, depthById, index, options.edgeKinds);
   const nodes: GraphNode[] = [...nodeIds].map((id) => {
     const symbol = index.byId.get(id)!;
@@ -207,44 +196,15 @@ export function buildFocusedCallGraph(
     }
   }
 
-  for (const [ownerId, hiddenCount] of hiddenCalleesByOwner) {
-    const boundary = limitBoundaryNode(ownerId, hiddenCount);
+  for (const [ownerId, hiddenCount] of hiddenByOwner) {
+    const boundary = limitBoundaryNode(ownerId, hiddenCount, relation);
     nodes.push(boundary);
-    graphEdges.set(limitEdgeKey(ownerId), {
-      id: limitEdgeKey(ownerId),
-      source: symbolNodeId(ownerId),
-      target: boundary.id,
+    graphEdges.set(limitEdgeKey(ownerId, relation), {
+      id: limitEdgeKey(ownerId, relation),
+      source: relation === "caller" ? boundary.id : symbolNodeId(ownerId),
+      target: relation === "caller" ? symbolNodeId(ownerId) : boundary.id,
       kind: "limit",
       confidence: "limit",
-      addedStackBytes: null,
-      addedStackStatus: "known",
-    });
-  }
-
-  for (const [ownerId, hiddenCount] of revealCalleesByOwner) {
-    if (hiddenCalleesByOwner.has(ownerId)) continue;
-    const boundary = revealBoundaryNode(ownerId, hiddenCount, "callee");
-    nodes.push(boundary);
-    graphEdges.set(revealEdgeKey(ownerId, "callee"), {
-      id: revealEdgeKey(ownerId, "callee"),
-      source: symbolNodeId(ownerId),
-      target: boundary.id,
-      kind: "reveal",
-      confidence: "reveal",
-      addedStackBytes: null,
-      addedStackStatus: "known",
-    });
-  }
-
-  for (const [ownerId, hiddenCount] of revealCallersByOwner) {
-    const boundary = revealBoundaryNode(ownerId, hiddenCount, "caller");
-    nodes.push(boundary);
-    graphEdges.set(revealEdgeKey(ownerId, "caller"), {
-      id: revealEdgeKey(ownerId, "caller"),
-      source: boundary.id,
-      target: symbolNodeId(ownerId),
-      kind: "reveal",
-      confidence: "reveal",
       addedStackBytes: null,
       addedStackStatus: "known",
     });
@@ -277,6 +237,7 @@ function pruneReachableGraph(
   index: GraphIndex,
   edgeKinds: ReadonlySet<EdgeKind>,
   maxNodes: number,
+  direction: GraphDirection,
 ): PrunedGraph {
   const nodeLimit = Math.max(1, Math.floor(maxNodes));
   const nodeIds = new Set(reachableNodeIds);
@@ -290,7 +251,7 @@ function pruneReachableGraph(
   return {
     nodeIds,
     hiddenNodeCount: reachableNodeIds.size - nodeIds.size,
-    hiddenCalleesByOwner: hiddenCalleeCounts(reachableNodeIds, nodeIds, index, edgeKinds),
+    hiddenByOwner: hiddenCounts(reachableNodeIds, nodeIds, index, edgeKinds, direction),
   };
 }
 
@@ -384,112 +345,54 @@ function connectedFromRoot(
   return connected;
 }
 
-function hiddenCalleeCounts(
+function hiddenCounts(
   reachableNodeIds: ReadonlySet<number>,
   retainedNodeIds: ReadonlySet<number>,
   index: GraphIndex,
   edgeKinds: ReadonlySet<EdgeKind>,
+  direction: GraphDirection,
 ): Map<number, number> {
   const hidden = new Set([...reachableNodeIds].filter((id) => !retainedNodeIds.has(id)));
   const counts = new Map<number, number>();
   for (const ownerId of retainedNodeIds) {
-    const hiddenDescendants = new Set<number>();
-    for (const edge of index.outgoing.get(ownerId) ?? []) {
-      if (edge.callee == null || !edgeKinds.has(edge.kind) || !hidden.has(edge.callee)) continue;
-      collectHiddenCallees(edge.callee, hidden, index, edgeKinds, hiddenDescendants);
-    }
-    if (hiddenDescendants.size > 0) counts.set(ownerId, hiddenDescendants.size);
-  }
-  return counts;
-}
-
-function hiddenCalleeDepthCounts(
-  reachableNodeIds: ReadonlySet<number>,
-  retainedNodeIds: ReadonlySet<number>,
-  index: GraphIndex,
-  edgeKinds: ReadonlySet<EdgeKind>,
-): Map<number, number> {
-  const counts = new Map<number, number>();
-  for (const ownerId of retainedNodeIds) {
-    const hiddenDescendants = new Set<number>();
-    for (const edge of index.outgoing.get(ownerId) ?? []) {
-      if (
-        edge.callee == null ||
-        !edgeKinds.has(edge.kind) ||
-        !index.visibleIds.has(edge.callee) ||
-        reachableNodeIds.has(edge.callee)
-      ) {
-        continue;
+    const hiddenSymbols = new Set<number>();
+    if (direction === "callers") {
+      for (const edge of index.incoming.get(ownerId) ?? []) {
+        if (!edgeKinds.has(edge.kind) || !hidden.has(edge.caller)) continue;
+        collectHidden(edge.caller, hidden, index, edgeKinds, direction, hiddenSymbols);
       }
-      collectVisibleCallees(edge.callee, reachableNodeIds, index, edgeKinds, hiddenDescendants);
+    } else {
+      for (const edge of index.outgoing.get(ownerId) ?? []) {
+        if (edge.callee == null || !edgeKinds.has(edge.kind) || !hidden.has(edge.callee)) continue;
+        collectHidden(edge.callee, hidden, index, edgeKinds, direction, hiddenSymbols);
+      }
     }
-    if (hiddenDescendants.size > 0) counts.set(ownerId, hiddenDescendants.size);
+    if (hiddenSymbols.size > 0) counts.set(ownerId, hiddenSymbols.size);
   }
   return counts;
 }
 
-function hiddenCallerDepthCounts(
-  reachableNodeIds: ReadonlySet<number>,
-  retainedNodeIds: ReadonlySet<number>,
-  index: GraphIndex,
-  edgeKinds: ReadonlySet<EdgeKind>,
-): Map<number, number> {
-  const counts = new Map<number, number>();
-  for (const ownerId of retainedNodeIds) {
-    const hiddenAncestors = new Set<number>();
-    for (const edge of index.incoming.get(ownerId) ?? []) {
-      if (!edgeKinds.has(edge.kind) || reachableNodeIds.has(edge.caller)) continue;
-      collectVisibleCallers(edge.caller, reachableNodeIds, index, edgeKinds, hiddenAncestors);
-    }
-    if (hiddenAncestors.size > 0) counts.set(ownerId, hiddenAncestors.size);
-  }
-  return counts;
-}
-
-function collectHiddenCallees(
+function collectHidden(
   id: number,
   hidden: ReadonlySet<number>,
   index: GraphIndex,
   edgeKinds: ReadonlySet<EdgeKind>,
+  direction: GraphDirection,
   collected: Set<number>,
 ) {
   if (!hidden.has(id) || collected.has(id)) return;
   collected.add(id);
-  for (const edge of index.outgoing.get(id) ?? []) {
-    if (edge.callee != null && edgeKinds.has(edge.kind)) {
-      collectHiddenCallees(edge.callee, hidden, index, edgeKinds, collected);
+  if (direction === "callers") {
+    for (const edge of index.incoming.get(id) ?? []) {
+      if (edgeKinds.has(edge.kind)) {
+        collectHidden(edge.caller, hidden, index, edgeKinds, direction, collected);
+      }
     }
-  }
-}
-
-function collectVisibleCallees(
-  id: number,
-  reachableNodeIds: ReadonlySet<number>,
-  index: GraphIndex,
-  edgeKinds: ReadonlySet<EdgeKind>,
-  collected: Set<number>,
-) {
-  if (!index.visibleIds.has(id) || reachableNodeIds.has(id) || collected.has(id)) return;
-  collected.add(id);
-  for (const edge of index.outgoing.get(id) ?? []) {
-    if (edge.callee != null && edgeKinds.has(edge.kind)) {
-      collectVisibleCallees(edge.callee, reachableNodeIds, index, edgeKinds, collected);
-    }
-  }
-}
-
-function collectVisibleCallers(
-  id: number,
-  reachableNodeIds: ReadonlySet<number>,
-  index: GraphIndex,
-  edgeKinds: ReadonlySet<EdgeKind>,
-  collected: Set<number>,
-) {
-  if (!index.visibleIds.has(id) || reachableNodeIds.has(id) || collected.has(id)) return;
-  collected.add(id);
-  for (const edge of index.incoming.get(id) ?? []) {
-    if (edgeKinds.has(edge.kind)) {
-      collectVisibleCallers(edge.caller, reachableNodeIds, index, edgeKinds, collected);
+  } else {
+    for (const edge of index.outgoing.get(id) ?? []) {
+      if (edge.callee != null && edgeKinds.has(edge.kind)) {
+        collectHidden(edge.callee, hidden, index, edgeKinds, direction, collected);
+      }
     }
   }
 }
@@ -536,50 +439,25 @@ function buildGraphIndex(
   return { byId, incoming, outgoing, visibleIds };
 }
 
-function walkCallers(
+function walkReachable(
   rootId: number,
-  maxDepth: number,
-  expandedIds: ReadonlySet<number>,
+  direction: GraphDirection,
   index: GraphIndex,
   edgeKinds: ReadonlySet<EdgeKind>,
-  visit: (edge: EdgeReport, depth: number) => boolean,
+  visit: (edge: EdgeReport, id: number, depth: number) => boolean,
 ) {
   const queue = [{ id: rootId, depth: 0 }];
   const seen = new Set<number>([rootId]);
   while (queue.length) {
     const current = queue.shift()!;
-    if (current.depth >= maxDepth && !expandedIds.has(current.id)) continue;
-    for (const edge of index.incoming.get(current.id) ?? []) {
+    const edges = direction === "callers" ? index.incoming.get(current.id) ?? [] : index.outgoing.get(current.id) ?? [];
+    for (const edge of edges) {
       if (!edgeKinds.has(edge.kind)) continue;
-      if (!visit(edge, current.depth + 1)) continue;
-      if (!seen.has(edge.caller)) {
-        seen.add(edge.caller);
-        queue.push({ id: edge.caller, depth: current.depth + 1 });
-      }
-    }
-  }
-}
-
-function walkCallees(
-  rootId: number,
-  maxDepth: number,
-  expandedIds: ReadonlySet<number>,
-  index: GraphIndex,
-  edgeKinds: ReadonlySet<EdgeKind>,
-  visit: (edge: EdgeReport, depth: number) => boolean,
-) {
-  const queue = [{ id: rootId, depth: 0 }];
-  const seen = new Set<number>([rootId]);
-  while (queue.length) {
-    const current = queue.shift()!;
-    if (current.depth >= maxDepth && !expandedIds.has(current.id)) continue;
-    for (const edge of index.outgoing.get(current.id) ?? []) {
-      if (!edgeKinds.has(edge.kind) || edge.callee == null) continue;
-      if (!visit(edge, current.depth + 1)) continue;
-      if (!seen.has(edge.callee)) {
-        seen.add(edge.callee);
-        queue.push({ id: edge.callee, depth: current.depth + 1 });
-      }
+      const nextId = direction === "callers" ? edge.caller : edge.callee;
+      if (nextId == null || seen.has(nextId)) continue;
+      if (!visit(edge, nextId, current.depth + 1)) continue;
+      seen.add(nextId);
+      queue.push({ id: nextId, depth: current.depth + 1 });
     }
   }
 }
@@ -662,7 +540,7 @@ function computeVisibleWorstStacks(
 ) {
   const outgoing = new Map<number, Array<{ callee: number; kind: EdgeKind }>>();
   for (const edge of edges) {
-    if (edge.kind === "limit" || edge.kind === "reveal") continue;
+    if (edge.kind === "limit") continue;
     const caller = symbolIdFromNodeId(edge.source);
     const callee = symbolIdFromNodeId(edge.target);
     if (caller == null || callee == null || !nodeIds.has(caller) || !nodeIds.has(callee)) continue;
@@ -755,48 +633,28 @@ function boundaryNode(edge: EdgeReport, ownerId: number): GraphBoundaryNode {
   };
 }
 
-function limitBoundaryNode(ownerId: number, hiddenCount: number): GraphBoundaryNode {
+function limitBoundaryNode(ownerId: number, hiddenCount: number, relation: Exclude<GraphRelation, "root">): GraphBoundaryNode {
+  const noun = relation === "caller"
+    ? hiddenCount === 1 ? "caller" : "callers"
+    : hiddenCount === 1 ? "callee" : "callees";
   return {
-    id: limitBoundaryNodeId(ownerId),
-    label: `+${hiddenCount.toLocaleString()} hidden ${hiddenCount === 1 ? "callee" : "callees"}`,
+    id: limitBoundaryNodeId(ownerId, relation),
+    label: `+${hiddenCount.toLocaleString()} hidden ${noun}`,
     detail: "pruned by node limit",
     ownerId,
-    relation: "callee",
+    relation,
     markerKind: "limit",
   };
 }
 
-function revealBoundaryNode(ownerId: number, hiddenCount: number, direction: GraphRevealDirection): GraphBoundaryNode {
-  const noun = direction === "caller"
-    ? hiddenCount === 1 ? "caller" : "callers"
-    : hiddenCount === 1 ? "callee" : "callees";
-  return {
-    id: revealBoundaryNodeId(ownerId, direction),
-    label: "Reveal more",
-    detail: `+${hiddenCount.toLocaleString()} ${noun}`,
-    ownerId,
-    relation: direction,
-    markerKind: "reveal",
-    revealDirection: direction,
-  };
+function limitBoundaryNodeId(ownerId: number, relation: Exclude<GraphRelation, "root">): string {
+  return `limit:${relation}:${ownerId}`;
 }
 
-function limitBoundaryNodeId(ownerId: number): string {
-  return `limit:${ownerId}`;
-}
-
-function limitEdgeKey(ownerId: number): string {
-  return `${symbolNodeId(ownerId)}->${limitBoundaryNodeId(ownerId)}:limit`;
-}
-
-function revealBoundaryNodeId(ownerId: number, direction: GraphRevealDirection): string {
-  return `reveal:${direction}:${ownerId}`;
-}
-
-function revealEdgeKey(ownerId: number, direction: GraphRevealDirection): string {
-  return direction === "caller"
-    ? `${revealBoundaryNodeId(ownerId, direction)}->${symbolNodeId(ownerId)}:reveal`
-    : `${symbolNodeId(ownerId)}->${revealBoundaryNodeId(ownerId, direction)}:reveal`;
+function limitEdgeKey(ownerId: number, relation: Exclude<GraphRelation, "root">): string {
+  return relation === "caller"
+    ? `${limitBoundaryNodeId(ownerId, relation)}->${symbolNodeId(ownerId)}:limit`
+    : `${symbolNodeId(ownerId)}->${limitBoundaryNodeId(ownerId, relation)}:limit`;
 }
 
 function edgeKey(edge: EdgeReport, source: string, target: string): string {
