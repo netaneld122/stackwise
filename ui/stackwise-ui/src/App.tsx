@@ -1718,6 +1718,7 @@ function TreemapCanvas({
       const nextHasRects = rects.length > 0;
       setHasRects((current) => (current === nextHasRects ? current : nextHasRects));
 
+      let selectedRect: TreemapRect | null = null;
       for (const rect of rects) {
         const fill = groupColor(rect.symbol, report);
         context.fillStyle = rectGradient(context, rect, fill);
@@ -1727,14 +1728,17 @@ function TreemapCanvas({
         context.stroke();
 
         if (rect.symbol.id === selectedId) {
-          context.strokeStyle = "#111827";
-          context.lineWidth = 3;
-          context.strokeRect(rect.x + 2, rect.y + 2, rect.width - 4, rect.height - 4);
-          context.lineWidth = 1;
+          selectedRect = rect;
         }
+      }
 
+      if (selectedRect) {
+        drawSelectedTreemapFocus(context, selectedRect, groupColor(selectedRect.symbol, report), ratio);
+      }
+
+      for (const rect of rects) {
         if (rect.width > 90 && rect.height > 28) {
-          context.fillStyle = readableText(fill);
+          context.fillStyle = readableText(groupColor(rect.symbol, report));
           context.font = `${12 * ratio}px system-ui`;
           context.fillText(trim(rect.symbol.demangled, Math.floor(rect.width / (7 * ratio))), rect.x + 6, rect.y + 16 * ratio);
         }
@@ -2997,6 +3001,54 @@ function rectGradient(
   gradient.addColorStop(0.55, base);
   gradient.addColorStop(1, mixColor(base, "#000000", 0.16));
   return gradient;
+}
+
+function selectedTreemapGradient(
+  context: CanvasRenderingContext2D,
+  rect: TreemapRect,
+  base: string,
+): CanvasGradient {
+  const gradient = context.createLinearGradient(rect.x, rect.y, rect.x + rect.width, rect.y + rect.height);
+  gradient.addColorStop(0, mixColor(base, "#5eead4", 0.34));
+  gradient.addColorStop(0.48, mixColor(base, "#ffffff", 0.08));
+  gradient.addColorStop(1, mixColor(base, "#0f766e", 0.22));
+  return gradient;
+}
+
+function drawSelectedTreemapFocus(
+  context: CanvasRenderingContext2D,
+  rect: TreemapRect,
+  base: string,
+  ratio: number,
+) {
+  const radius = Math.min(7 * ratio, rect.width / 5, rect.height / 5);
+  const inset = Math.min(4 * ratio, Math.max(1.5 * ratio, rect.width / 12, rect.height / 12));
+  const innerWidth = Math.max(0, rect.width - inset * 2);
+  const innerHeight = Math.max(0, rect.height - inset * 2);
+
+  context.save();
+  context.shadowColor = "rgba(45, 212, 191, 0.48)";
+  context.shadowBlur = 18 * ratio;
+  context.shadowOffsetY = 0;
+  context.lineWidth = Math.max(2 * ratio, 2);
+  context.strokeStyle = "rgba(94, 234, 212, 0.74)";
+  roundRect(context, rect.x + inset, rect.y + inset, innerWidth, innerHeight, Math.max(0, radius - inset));
+  context.stroke();
+  context.restore();
+
+  context.save();
+  context.globalAlpha = 0.28;
+  context.fillStyle = selectedTreemapGradient(context, rect, base);
+  roundRect(context, rect.x + inset, rect.y + inset, innerWidth, innerHeight, Math.max(0, radius - inset));
+  context.fill();
+  context.restore();
+
+  context.save();
+  context.lineWidth = Math.max(1.25 * ratio, 1.25);
+  context.strokeStyle = "rgba(255, 255, 255, 0.82)";
+  roundRect(context, rect.x + inset + ratio, rect.y + inset + ratio, Math.max(0, innerWidth - ratio * 2), Math.max(0, innerHeight - ratio * 2), Math.max(0, radius - inset - ratio));
+  context.stroke();
+  context.restore();
 }
 
 function mixColor(left: string, right: string, amount: number): string {
