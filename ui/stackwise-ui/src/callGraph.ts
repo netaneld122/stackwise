@@ -19,6 +19,7 @@ export interface GraphOptions {
   maxNodes: number;
   edgeKinds: ReadonlySet<EdgeKind>;
   direction?: GraphDirection;
+  revealOwnerIds?: ReadonlySet<number>;
 }
 
 export interface GraphSymbolNode {
@@ -166,6 +167,7 @@ export function buildFocusedCallGraph(
     options.edgeKinds,
     options.maxNodes,
     direction,
+    options.revealOwnerIds ?? new Set(),
   );
   const stackById = computeCumulativeStacks(rootId, nodeIds, relationById, depthById, index, options.edgeKinds);
   const nodes: GraphNode[] = [...nodeIds].map((id) => {
@@ -239,11 +241,13 @@ function pruneReachableGraph(
   edgeKinds: ReadonlySet<EdgeKind>,
   maxNodes: number,
   direction: GraphDirection,
+  revealOwnerIds: ReadonlySet<number>,
 ): PrunedGraph {
   const nodeLimit = Math.max(1, Math.floor(maxNodes));
   const nodeIds = new Set(reachableNodeIds);
+  const protectedIds = collectRevealProtectedIds(rootId, reachableNodeIds, index, edgeKinds, direction, revealOwnerIds);
   while (nodeIds.size > nodeLimit) {
-    const candidate = choosePruneCandidate(rootId, nodeIds, depthById, index, edgeKinds);
+    const candidate = choosePruneCandidate(rootId, nodeIds, depthById, index, edgeKinds, protectedIds);
     if (candidate == null) break;
     nodeIds.delete(candidate);
     keepRootConnected(rootId, nodeIds, index, edgeKinds);
@@ -262,18 +266,52 @@ function choosePruneCandidate(
   depthById: ReadonlyMap<number, number>,
   index: GraphIndex,
   edgeKinds: ReadonlySet<EdgeKind>,
+  protectedIds: ReadonlySet<number>,
 ): number | null {
   const candidates = [...nodeIds]
     .filter((id) => id !== rootId)
     .sort((left, right) => (depthById.get(right) ?? 0) - (depthById.get(left) ?? 0) || right - left);
   if (!candidates.length) return null;
 
-  const leaf = candidates.find((id) => graphNeighborCount(id, nodeIds, index, edgeKinds) <= 1);
+  const preferredCandidates = candidates.some((id) => !protectedIds.has(id))
+    ? candidates.filter((id) => !protectedIds.has(id))
+    : candidates;
+
+  const leaf = preferredCandidates.find((id) => graphNeighborCount(id, nodeIds, index, edgeKinds) <= 1);
   if (leaf != null) return leaf;
 
-  return candidates.find((id) => keepsRootConnectedAfterRemoving(rootId, id, nodeIds, index, edgeKinds))
-    ?? candidates[0]
+  return preferredCandidates.find((id) => keepsRootConnectedAfterRemoving(rootId, id, nodeIds, index, edgeKinds))
+    ?? preferredCandidates[0]
     ?? null;
+}
+
+function collectRevealProtectedIds(
+  rootId: number,
+  reachableNodeIds: ReadonlySet<number>,
+  index: GraphIndex,
+  edgeKinds: ReadonlySet<EdgeKind>,
+  direction: GraphDirection,
+  revealOwnerIds: ReadonlySet<number>,
+): Set<number> {
+  const protectedIds = new Set<number>();
+  for (const ownerId of revealOwnerIds) {
+    if (!reachableNodeIds.has(ownerId)) continue;
+    const queue = [ownerId];
+    const seen = new Set<number>(queue);
+    while (queue.length) {
+      const current = queue.shift()!;
+      for (const edge of direction === "callers" ? index.incoming.get(current) ?? [] : index.outgoing.get(current) ?? []) {
+        if (!edgeKinds.has(edge.kind)) continue;
+        const next = direction === "callers" ? edge.caller : edge.callee;
+        if (next == null || seen.has(next) || !reachableNodeIds.has(next)) continue;
+        protectedIds.add(next);
+        seen.add(next);
+        queue.push(next);
+      }
+    }
+  }
+  protectedIds.delete(rootId);
+  return protectedIds;
 }
 
 function graphNeighborCount(

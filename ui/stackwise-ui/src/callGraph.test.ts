@@ -199,6 +199,45 @@ describe("call graph helpers", () => {
     expect(marker && "detail" in marker ? marker.detail : null).toBe("+3 callees");
   });
 
+  it("prioritizes the clicked reveal-more branch when extra nodes are available", () => {
+    const symbols = [
+      symbol(0, "demo::main", 8),
+      symbol(1, "demo::left", 8),
+      symbol(2, "demo::left::leaf0", 8),
+      symbol(3, "demo::left::leaf1", 8),
+      symbol(4, "demo::left::leaf2", 8),
+      symbol(5, "demo::right", 8),
+      symbol(6, "demo::right::leaf0", 8),
+      symbol(7, "demo::right::leaf1", 8),
+      symbol(8, "demo::right::leaf2", 8),
+    ];
+    const report = reportWith(symbols, [
+      edge(0, 1, "direct_call"),
+      edge(1, 2, "direct_call"),
+      edge(1, 3, "direct_call"),
+      edge(1, 4, "direct_call"),
+      edge(0, 5, "direct_call"),
+      edge(5, 6, "direct_call"),
+      edge(5, 7, "direct_call"),
+      edge(5, 8, "direct_call"),
+    ]);
+
+    const graph = buildFocusedCallGraph(report, symbols, {
+      rootId: 0,
+      maxNodes: 6,
+      edgeKinds: allEdges,
+      revealOwnerIds: new Set([5]),
+    });
+
+    const symbolIds = graph.nodes
+      .filter((node): node is GraphSymbolNode => "symbol" in node)
+      .map((node) => node.symbol.id)
+      .sort((left, right) => left - right);
+    expect(symbolIds).toEqual([0, 1, 5, 6, 7, 8]);
+    expect(graph.nodes.map((node) => node.id)).not.toContain("limit:callee:5");
+    expect(graph.nodes.map((node) => node.id)).toContain("limit:callee:1");
+  });
+
   it("prunes deepest leaves while keeping every retained symbol connected to root", () => {
     const symbols = Array.from({ length: 7 }, (_, id) => symbol(id, id === 0 ? "demo::main" : `demo::n${id}`, 8));
     const report = reportWith(symbols, [

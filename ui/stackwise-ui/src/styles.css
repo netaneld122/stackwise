@@ -1384,6 +1384,11 @@ dd {
   stroke-width: 4px;
 }
 
+.callGraphMiniMap .react-flow__minimap-mask {
+  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--accent) 42%, transparent));
+  vector-effect: non-scaling-stroke;
+}
+
 .graphContextMenu {
   position: fixed;
   z-index: 20;

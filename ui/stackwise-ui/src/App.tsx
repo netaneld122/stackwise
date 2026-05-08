@@ -103,6 +103,7 @@ type GraphNavigationState = {
   mode: GraphNavigationMode;
   actionSymbolId: number | null;
   highlightBranchRootId: number | null;
+  revealOwnerIds: number[];
 };
 type GraphNavigationHistory = {
   past: GraphNavigationState[];
@@ -119,6 +120,7 @@ const defaultGraphNavigationState: GraphNavigationState = {
   mode: "default",
   actionSymbolId: null,
   highlightBranchRootId: null,
+  revealOwnerIds: [],
 };
 const graphLayoutOptions: Array<{ value: GraphLayout; label: string }> = [
   { value: "TB", label: "Top down" },
@@ -219,6 +221,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
   const graphState = graphHistory.present;
   const { rootId: graphRootId, nodeLimit, layout: graphLayout } = graphState;
   const edgeKinds = useMemo(() => new Set(graphState.edgeKinds), [graphState.edgeKinds]);
+  const revealOwnerIds = useMemo(() => new Set(graphState.revealOwnerIds), [graphState.revealOwnerIds]);
   const status = (
     <AnalysisFileStatus
       reportPath={reportPath}
@@ -249,9 +252,10 @@ function ReportView({ report }: { report: StackwiseReport }) {
         maxNodes: Number.MAX_SAFE_INTEGER,
         edgeKinds,
         direction: graphDirection,
+        revealOwnerIds,
       });
     },
-    [edgeKinds, effectiveGraphRoot, graphDirection, report, symbols, viewMode],
+    [edgeKinds, effectiveGraphRoot, graphDirection, report, revealOwnerIds, symbols, viewMode],
   );
   const graphNodeLimitMax = Math.max(1, graphLimitStats?.reachableNodeCount ?? nodeLimit);
   const effectiveNodeLimit = clamp(nodeLimit, 1, graphNodeLimitMax);
@@ -293,6 +297,13 @@ function ReportView({ report }: { report: StackwiseReport }) {
     });
   };
   const setNodeLimit = (nodeLimit: number) => commitGraphNavigation((current) => ({ ...current, nodeLimit }));
+  const revealMoreFromOwner = (ownerId: number, hiddenCount: number) => commitGraphNavigation((current) => ({
+    ...current,
+    nodeLimit: clamp(current.nodeLimit + hiddenCount, 1, graphNodeLimitMax),
+    revealOwnerIds: current.revealOwnerIds.includes(ownerId)
+      ? current.revealOwnerIds
+      : [...current.revealOwnerIds, ownerId].slice(-24),
+  }));
   const setGraphLayout = (layout: GraphLayout) => commitGraphNavigation((current) => ({ ...current, layout }));
   const showWorstBranchHighlight = (symbolId: number) => commitGraphNavigation((current) => ({
     ...current,
@@ -306,6 +317,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
     mode: "focus",
     actionSymbolId: symbolId,
     highlightBranchRootId: null,
+    revealOwnerIds: [],
   }));
   const showCallersForSymbol = (symbolId: number) => {
     commitGraphNavigation((current) => ({
@@ -315,6 +327,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
       mode: "callers",
       actionSymbolId: symbolId,
       highlightBranchRootId: null,
+      revealOwnerIds: [],
     }));
   };
   const showSymbolInCallGraph = (symbolId: number) => {
@@ -459,16 +472,16 @@ function ReportView({ report }: { report: StackwiseReport }) {
               rootId={effectiveGraphRoot}
               direction={graphDirection}
               nodeLimit={effectiveNodeLimit}
-              nodeLimitMax={graphNodeLimitMax}
               edgeKinds={edgeKinds}
               layout={graphLayout}
               selectedId={selectedId}
               highlightedWorstBranchRootId={graphState.highlightBranchRootId}
+              revealOwnerIds={revealOwnerIds}
               onPivotSymbol={pivotToSymbol}
               onShowCallers={showCallersForSymbol}
               onShowWorstBranch={showWorstBranchHighlight}
               onShowInTreemap={showSymbolInTreemap}
-              onSetNodeLimit={setNodeLimit}
+              onRevealMore={revealMoreFromOwner}
             />
           )}
         </div>
@@ -652,7 +665,9 @@ function sameGraphNavigationState(left: GraphNavigationState, right: GraphNaviga
     left.actionSymbolId === right.actionSymbolId &&
     left.highlightBranchRootId === right.highlightBranchRootId &&
     left.edgeKinds.length === right.edgeKinds.length &&
-    left.edgeKinds.every((kind, index) => kind === right.edgeKinds[index])
+    left.edgeKinds.every((kind, index) => kind === right.edgeKinds[index]) &&
+    left.revealOwnerIds.length === right.revealOwnerIds.length &&
+    left.revealOwnerIds.every((id, index) => id === right.revealOwnerIds[index])
   );
 }
 
@@ -1852,7 +1867,7 @@ type FlowData = {
   dimmed: boolean;
   branchHighlighted: boolean;
   onSymbolContextMenu?: (event: ReactMouseEvent<HTMLElement>, graphNode: GraphNode) => void;
-  onRevealMore?: (hiddenCount: number) => void;
+  onRevealMore?: (ownerId: number, hiddenCount: number) => void;
 };
 type StackwiseFlowNode = FlowNode<FlowData, "stackwise">;
 type FlowEdgeData = {
@@ -1874,32 +1889,32 @@ function CallGraphView({
   rootId,
   direction,
   nodeLimit,
-  nodeLimitMax,
   edgeKinds,
   layout,
   selectedId,
   highlightedWorstBranchRootId,
+  revealOwnerIds,
   onPivotSymbol,
   onShowCallers,
   onShowWorstBranch,
   onShowInTreemap,
-  onSetNodeLimit,
+  onRevealMore,
 }: {
   report: StackwiseReport;
   symbols: SymbolReport[];
   rootId: number | null;
   direction: GraphDirection;
   nodeLimit: number;
-  nodeLimitMax: number;
   edgeKinds: ReadonlySet<EdgeKind>;
   layout: GraphLayout;
   selectedId: number | null;
   highlightedWorstBranchRootId: number | null;
+  revealOwnerIds: ReadonlySet<number>;
   onPivotSymbol: (symbolId: number) => void;
   onShowCallers: (symbolId: number) => void;
   onShowWorstBranch: (symbolId: number) => void;
   onShowInTreemap: (symbolId: number) => void;
-  onSetNodeLimit: (nodeLimit: number) => void;
+  onRevealMore: (ownerId: number, hiddenCount: number) => void;
 }) {
   const { setSelectedId } = useStackwiseStore();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; symbol: SymbolReport } | null>(null);
@@ -1910,8 +1925,9 @@ function CallGraphView({
         maxNodes: nodeLimit,
         edgeKinds,
         direction,
+        revealOwnerIds,
       }),
-    [direction, edgeKinds, nodeLimit, report, rootId, symbols],
+    [direction, edgeKinds, nodeLimit, report, revealOwnerIds, rootId, symbols],
   );
   const visibleGraph = useMemo(
     () => worstPathGraphSlice(focused.nodes, focused.edges, highlightedWorstBranchRootId),
@@ -1942,10 +1958,10 @@ function CallGraphView({
       data: {
         ...node.data,
         onSymbolContextMenu: openSymbolContextMenu,
-        onRevealMore: (hiddenCount) => onSetNodeLimit(clamp(nodeLimit + hiddenCount, 1, nodeLimitMax)),
+        onRevealMore,
       },
     })),
-    [nodeLimit, nodeLimitMax, nodes, onSetNodeLimit, openSymbolContextMenu],
+    [nodes, onRevealMore, openSymbolContextMenu],
   );
   const fitKey = useMemo(
     () => `${focused.rootId}:${direction}:${highlightedWorstBranchRootId ?? "all"}:${layout}:${[...edgeKinds].sort().join(",")}:${symbols.length}`,
@@ -2017,6 +2033,8 @@ function CallGraphView({
           const graphNode = node.data.graphNode;
           if ("symbol" in graphNode) {
             setSelectedId(graphNode.symbol.id);
+          } else if (graphNode.markerKind === "limit" && graphNode.hiddenCount != null) {
+            onRevealMore(graphNode.ownerId, graphNode.hiddenCount);
           }
         }}
         onNodeContextMenu={(event, node) => {
@@ -2115,12 +2133,12 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
         role={isReveal ? "button" : undefined}
         tabIndex={isReveal ? 0 : undefined}
         title={isReveal ? "Reveal more nodes by increasing the graph node budget" : node.detail}
-        onClick={isReveal ? () => data.onRevealMore?.(node.hiddenCount!) : undefined}
+        onClick={isReveal ? () => data.onRevealMore?.(node.ownerId, node.hiddenCount!) : undefined}
         onKeyDown={isReveal
           ? (event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
-                data.onRevealMore?.(node.hiddenCount!);
+                data.onRevealMore?.(node.ownerId, node.hiddenCount!);
               }
             }
           : undefined}
@@ -2331,10 +2349,10 @@ function TightMiniMap({
         bgColor="var(--minimap-bg)"
         maskColor="var(--minimap-mask)"
         maskStrokeColor="var(--accent)"
-        maskStrokeWidth={2}
-        offsetScale={18}
+        maskStrokeWidth={3}
+        offsetScale={8}
         pannable={false}
-        style={{ width: 176, height: 124 }}
+        style={{ width: 248, height: 168 }}
         onNodeClick={(_, node) => onNodeClick(node)}
       />
     </div>
