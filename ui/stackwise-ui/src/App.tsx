@@ -2026,6 +2026,8 @@ function CallGraphView({
         maxZoom={1.6}
         translateExtent={extent}
         nodesDraggable={false}
+        nodesConnectable={false}
+        connectOnClick={false}
         onPaneClick={() => setContextMenu(null)}
         onPaneContextMenu={(event) => {
           event.preventDefault();
@@ -2152,8 +2154,8 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
             }
           : undefined}
       >
-        <Handle type="target" position={handles.target} />
-        <Handle type="source" position={handles.source} />
+        <Handle type="target" position={handles.target} isConnectable={false} />
+        <Handle type="source" position={handles.source} isConnectable={false} />
         <strong>{node.label}</strong>
         <span>{node.detail}</span>
       </div>
@@ -2168,8 +2170,8 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
       title={symbol.demangled}
       onContextMenu={(event) => data.onSymbolContextMenu?.(event, node)}
     >
-      <Handle type="target" position={handles.target} />
-      <Handle type="source" position={handles.source} />
+      <Handle type="target" position={handles.target} isConnectable={false} />
+      <Handle type="source" position={handles.source} isConnectable={false} />
       <div className="nodeTopline">
         <span className="nodeRelation">{node.relation}</span>
       </div>

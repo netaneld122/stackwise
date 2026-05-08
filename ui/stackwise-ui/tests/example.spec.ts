@@ -531,6 +531,35 @@ test("does not label edges into indirect call boundary nodes", async ({ page }) 
   await expect(page.locator(".callEdgeLabel.indirect_call")).toHaveCount(0);
 });
 
+test("call graph handles are read-only and cannot draw new edges", async ({ page }) => {
+  const symbols = [symbolFixture(0, "demo::main", ["demo"]), symbolFixture(1, "demo::leaf", ["demo"])];
+  const edges = [edgeFixture(0, 1)];
+
+  await page.route("/report.json", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(reportFixture(symbols, edges)),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Call Graph" }).click();
+  const handle = page.locator(".react-flow__handle").first();
+  await expect(handle).toBeVisible();
+  await expect(handle).toHaveCSS("cursor", "default");
+  await expect(handle).toHaveCSS("pointer-events", "none");
+  const handleBox = await handle.boundingBox();
+  const targetNodeBox = await page.locator('.symbolNode[title="demo::leaf"]').boundingBox();
+  if (!handleBox || !targetNodeBox) throw new Error("Expected handle and target node bounds");
+
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(targetNodeBox.x + targetNodeBox.width / 2, targetNodeBox.y + targetNodeBox.height / 2, { steps: 4 });
+  await page.mouse.up();
+
+  await expect(page.locator(".react-flow__connectionline")).toHaveCount(0);
+});
+
 test("call graph node slider is the only branch limit and preserves the viewport", async ({ page }) => {
   const symbols = Array.from({ length: 7 }, (_, id) =>
     symbolFixture(id, id === 0 ? "demo::main" : `demo::f${id}`, ["demo"]),
