@@ -475,6 +475,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
               edgeKinds={edgeKinds}
               layout={graphLayout}
               selectedId={selectedId}
+              focusSymbolId={graphState.actionSymbolId}
               highlightedWorstBranchRootId={graphState.highlightBranchRootId}
               revealOwnerIds={revealOwnerIds}
               onPivotSymbol={pivotToSymbol}
@@ -1892,6 +1893,7 @@ function CallGraphView({
   edgeKinds,
   layout,
   selectedId,
+  focusSymbolId,
   highlightedWorstBranchRootId,
   revealOwnerIds,
   onPivotSymbol,
@@ -1908,6 +1910,7 @@ function CallGraphView({
   edgeKinds: ReadonlySet<EdgeKind>;
   layout: GraphLayout;
   selectedId: number | null;
+  focusSymbolId: number | null;
   highlightedWorstBranchRootId: number | null;
   revealOwnerIds: ReadonlySet<number>;
   onPivotSymbol: (symbolId: number) => void;
@@ -2053,6 +2056,11 @@ function CallGraphView({
           });
         }}
       >
+        <GraphTargetFocus
+          focusKey={fitKey}
+          nodes={interactiveNodes}
+          symbolId={focusSymbolId}
+        />
         <Background color="var(--graph-grid)" gap={22} />
         <FlowControls showInteractive={false} />
         {nodes.length > 8 ? (
@@ -2213,6 +2221,42 @@ function StackwiseGraphEdge({
       ) : null}
     </>
   );
+}
+
+function GraphTargetFocus({
+  focusKey,
+  nodes,
+  symbolId,
+}: {
+  focusKey: string;
+  nodes: StackwiseFlowNode[];
+  symbolId: number | null;
+}) {
+  const flow = useReactFlow<StackwiseFlowNode, StackwiseFlowEdge>();
+  const appliedFocusRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (symbolId == null) return;
+    const targetNode = nodes.find((node) => node.id === symbolNodeId(symbolId));
+    if (!targetNode) return;
+    const width = targetNode.width ?? targetNode.measured?.width ?? 278;
+    const height = targetNode.height ?? targetNode.measured?.height ?? 142;
+    const centerX = targetNode.position.x + width / 2;
+    const centerY = targetNode.position.y + height / 2;
+    const nextFocusKey = `${focusKey}:${symbolId}:${Math.round(centerX)}:${Math.round(centerY)}`;
+    if (appliedFocusRef.current === nextFocusKey) return;
+    appliedFocusRef.current = nextFocusKey;
+
+    const timeout = window.setTimeout(() => {
+      void flow.setCenter(centerX, centerY, {
+        duration: 180,
+        zoom: 1.18,
+      });
+    }, 60);
+    return () => window.clearTimeout(timeout);
+  }, [flow, focusKey, nodes, symbolId]);
+
+  return null;
 }
 
 function TightMiniMap({

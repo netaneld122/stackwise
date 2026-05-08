@@ -392,6 +392,15 @@ test("cross-navigates symbols between treemap and call graph context menus", asy
 
   await expect(page.getByRole("tab", { name: "Call Graph" })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator(".graphFocusStatus")).toContainText("Pinned focus");
+  const selectedGraphNode = page.locator(".symbolNode.selected");
+  await expect(selectedGraphNode).toBeVisible();
+  const selectedGraphNodeBox = await selectedGraphNode.boundingBox();
+  const graphPaneBox = await page.locator(".graphShell").boundingBox();
+  if (!selectedGraphNodeBox || !graphPaneBox) throw new Error("Expected selected graph node and graph pane bounds");
+  expect(selectedGraphNodeBox.x + selectedGraphNodeBox.width / 2).toBeGreaterThan(graphPaneBox.x);
+  expect(selectedGraphNodeBox.x + selectedGraphNodeBox.width / 2).toBeLessThan(graphPaneBox.x + graphPaneBox.width);
+  expect(selectedGraphNodeBox.y + selectedGraphNodeBox.height / 2).toBeGreaterThan(graphPaneBox.y);
+  expect(selectedGraphNodeBox.y + selectedGraphNodeBox.height / 2).toBeLessThan(graphPaneBox.y + graphPaneBox.height);
 
   const graphNode = page.locator(".symbolNode").first();
   await expect(graphNode).toBeVisible();
