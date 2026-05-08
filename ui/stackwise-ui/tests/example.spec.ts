@@ -222,6 +222,7 @@ test("renders the application shell", async ({ page }) => {
   await stdRow.click({ modifiers: ["Shift"] });
   await expect(stdCheckbox).not.toBeChecked();
   await expect(coreCheckbox).not.toBeChecked();
+
   await page.getByRole("tab", { name: "Call Graph" }).click();
   await expect(page.getByRole("button", { name: "Pivot" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Who calls this?" })).toHaveCount(0);
@@ -368,6 +369,37 @@ async function minimapMaskScreenRect(page: Page): Promise<{ x: number; y: number
     };
   });
 }
+
+test("cross-navigates symbols between treemap and call graph context menus", async ({ page }) => {
+  const symbols = [
+    symbolFixture(0, "demo::main", ["demo"], 16),
+    symbolFixture(1, "demo::leaf", ["demo"], 64),
+  ];
+  await page.route("/report.json", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(reportFixture(symbols, [edgeFixture(0, 1)])),
+    });
+  });
+
+  await page.goto("/");
+  const treemapCanvas = page.locator(".treemapShell canvas");
+  const treemapBox = await treemapCanvas.boundingBox();
+  if (!treemapBox) throw new Error("Expected treemap canvas bounds");
+  await page.mouse.click(treemapBox.x + treemapBox.width * 0.35, treemapBox.y + treemapBox.height * 0.5, { button: "right" });
+  await expect(page.getByRole("menu").getByRole("menuitem", { name: "Show in call graph" })).toBeVisible();
+  await page.getByRole("menu").getByRole("menuitem", { name: "Show in call graph" }).click();
+
+  await expect(page.getByRole("tab", { name: "Call Graph" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".graphFocusStatus")).toContainText("Pinned focus");
+
+  await page.locator(".symbolNode").first().click({ button: "right" });
+  await expect(page.getByRole("menu").getByRole("menuitem", { name: "Show in treemap" })).toBeVisible();
+  await page.getByRole("menu").getByRole("menuitem", { name: "Show in treemap" }).click();
+
+  await expect(page.getByRole("tab", { name: "Stack Treemap" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".detailCard")).toContainText(/demo::(?:main|leaf)/);
+});
 
 test("renders call graph minimap nodes for larger reports", async ({ page }) => {
   const symbols = Array.from({ length: 12 }, (_, id) => ({

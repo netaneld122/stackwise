@@ -181,6 +181,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
     measurementFilter,
     setMeasurementFilter,
     selectedId,
+    setSelectedId,
     selectedSymbol,
     reportPath,
     setReport,
@@ -315,6 +316,15 @@ function ReportView({ report }: { report: StackwiseReport }) {
       highlightBranchRootId: null,
     }));
   };
+  const showSymbolInCallGraph = (symbolId: number) => {
+    setSelectedId(symbolId);
+    setViewMode("call_graph");
+    pivotToSymbol(symbolId);
+  };
+  const showSymbolInTreemap = (symbolId: number) => {
+    setSelectedId(symbolId);
+    setViewMode("treemap");
+  };
 
   const openAnalysisFilePicker = () => {
     setAnalysisFileError(null);
@@ -434,7 +444,13 @@ function ReportView({ report }: { report: StackwiseReport }) {
         ) : null}
         <div className="middlePaneBody">
           {viewMode === "treemap" ? (
-            <TreemapCanvas report={report} symbols={symbols} metric={metric} selectedId={selectedId} />
+            <TreemapCanvas
+              report={report}
+              symbols={symbols}
+              metric={metric}
+              selectedId={selectedId}
+              onShowInCallGraph={showSymbolInCallGraph}
+            />
           ) : (
             <CallGraphView
               report={report}
@@ -449,6 +465,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
               onPivotSymbol={pivotToSymbol}
               onShowCallers={showCallersForSymbol}
               onShowWorstBranch={showWorstBranchHighlight}
+              onShowInTreemap={showSymbolInTreemap}
             />
           )}
         </div>
@@ -1637,16 +1654,19 @@ function TreemapCanvas({
   symbols,
   metric,
   selectedId,
+  onShowInCallGraph,
 }: {
   report: StackwiseReport;
   symbols: SymbolReport[];
   metric: Metric;
   selectedId: number | null;
+  onShowInCallGraph: (symbolId: number) => void;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const { setSelectedId } = useStackwiseStore();
   const rectsRef = useRef<TreemapRect[]>([]);
   const [hovered, setHovered] = useState<{ symbol: SymbolReport; x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; symbol: SymbolReport } | null>(null);
   const [hasRects, setHasRects] = useState(true);
 
   const hitTest = (event: { clientX: number; clientY: number; currentTarget: HTMLCanvasElement }): TreemapRect | null => {
@@ -1708,6 +1728,22 @@ function TreemapCanvas({
     return () => observer.disconnect();
   }, [report, symbols, metric, selectedId]);
 
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [contextMenu]);
+
   return (
     <div className="treemapShell">
       <canvas
@@ -1728,10 +1764,47 @@ function TreemapCanvas({
         }}
         onPointerLeave={() => setHovered(null)}
         onClick={(event) => {
+          setContextMenu(null);
           const rect = hitTest(event);
           setSelectedId(rect?.symbol.id ?? null);
         }}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          const rect = hitTest(event);
+          if (!rect) {
+            setContextMenu(null);
+            return;
+          }
+          setSelectedId(rect.symbol.id);
+          setContextMenu({
+            ...positionContextMenuAtPoint(event.clientX, event.clientY, 180, 48),
+            symbol: rect.symbol,
+          });
+        }}
       />
+      {contextMenu
+        ? createPortal(
+            <div
+              className="graphContextMenu treemapContextMenu"
+              role="menu"
+              style={{ left: contextMenu.x, top: contextMenu.y }}
+              onClick={(event) => event.stopPropagation()}
+              onContextMenu={(event) => event.preventDefault()}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onShowInCallGraph(contextMenu.symbol.id);
+                  setContextMenu(null);
+                }}
+              >
+                <GitBranch size={14} /> Show in call graph
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
       {hovered ? (
         <div
           className="treemapTooltip"
@@ -1787,7 +1860,7 @@ type StackwiseFlowEdge = FlowEdge<FlowEdgeData, "stackwise">;
 const nodeTypes = { stackwise: StackwiseGraphNode };
 const edgeTypes = { stackwise: StackwiseGraphEdge };
 const GRAPH_CONTEXT_MENU_WIDTH = 190;
-const GRAPH_CONTEXT_MENU_HEIGHT = 132;
+const GRAPH_CONTEXT_MENU_HEIGHT = 172;
 const GRAPH_CONTEXT_MENU_GAP = 8;
 
 function CallGraphView({
@@ -1803,6 +1876,7 @@ function CallGraphView({
   onPivotSymbol,
   onShowCallers,
   onShowWorstBranch,
+  onShowInTreemap,
 }: {
   report: StackwiseReport;
   symbols: SymbolReport[];
@@ -1816,6 +1890,7 @@ function CallGraphView({
   onPivotSymbol: (symbolId: number) => void;
   onShowCallers: (symbolId: number) => void;
   onShowWorstBranch: (symbolId: number) => void;
+  onShowInTreemap: (symbolId: number) => void;
 }) {
   const { setSelectedId } = useStackwiseStore();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; symbol: SymbolReport } | null>(null);
@@ -1998,6 +2073,16 @@ function CallGraphView({
                 }}
               >
                 <GitBranch size={14} /> Show callers
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onShowInTreemap(contextMenu.symbol.id);
+                  setContextMenu(null);
+                }}
+              >
+                <Grid2X2 size={14} /> Show in treemap
               </button>
             </div>,
             document.body,
@@ -2632,6 +2717,13 @@ function positionGraphContextMenu(rect: DOMRect): { x: number; y: number } {
   const x = right <= maxX ? right : clamp(left, GRAPH_CONTEXT_MENU_GAP, maxX);
   const y = clamp(rect.top + rect.height / 2 - GRAPH_CONTEXT_MENU_HEIGHT / 2, GRAPH_CONTEXT_MENU_GAP, maxY);
   return { x, y };
+}
+
+function positionContextMenuAtPoint(x: number, y: number, width: number, height: number): { x: number; y: number } {
+  return {
+    x: clamp(x, GRAPH_CONTEXT_MENU_GAP, Math.max(GRAPH_CONTEXT_MENU_GAP, window.innerWidth - width - GRAPH_CONTEXT_MENU_GAP)),
+    y: clamp(y, GRAPH_CONTEXT_MENU_GAP, Math.max(GRAPH_CONTEXT_MENU_GAP, window.innerHeight - height - GRAPH_CONTEXT_MENU_GAP)),
+  };
 }
 
 function readableText(hex: string): string {
