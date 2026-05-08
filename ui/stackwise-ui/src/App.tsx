@@ -3030,9 +3030,10 @@ function selectedTreemapGradient(
   base: string,
 ): CanvasGradient {
   const gradient = context.createLinearGradient(rect.x, rect.y, rect.x + rect.width, rect.y + rect.height);
-  gradient.addColorStop(0, mixColor(base, "#5eead4", 0.34));
-  gradient.addColorStop(0.48, mixColor(base, "#ffffff", 0.08));
-  gradient.addColorStop(1, mixColor(base, "#0f766e", 0.22));
+  gradient.addColorStop(0, mixColor(base, "#ffffff", 0.44));
+  gradient.addColorStop(0.28, mixColor(base, "#5eead4", 0.28));
+  gradient.addColorStop(0.64, mixColor(base, "#000000", 0.02));
+  gradient.addColorStop(1, mixColor(base, "#020617", 0.26));
   return gradient;
 }
 
@@ -3042,34 +3043,81 @@ function drawSelectedTreemapFocus(
   base: string,
   ratio: number,
 ) {
-  const radius = Math.min(7 * ratio, rect.width / 5, rect.height / 5);
-  const inset = Math.min(4 * ratio, Math.max(1.5 * ratio, rect.width / 12, rect.height / 12));
-  const innerWidth = Math.max(0, rect.width - inset * 2);
-  const innerHeight = Math.max(0, rect.height - inset * 2);
+  const radius = Math.min(8 * ratio, rect.width / 4, rect.height / 4);
+  const inset = Math.min(3 * ratio, Math.max(1 * ratio, rect.width / 20, rect.height / 20));
+  const x = rect.x + inset;
+  const y = rect.y + inset;
+  const width = Math.max(0, rect.width - inset * 2);
+  const height = Math.max(0, rect.height - inset * 2);
+  const focusRadius = Math.max(0, radius - inset);
+  if (width <= 0 || height <= 0) return;
 
   context.save();
-  context.shadowColor = "rgba(45, 212, 191, 0.48)";
-  context.shadowBlur = 18 * ratio;
-  context.shadowOffsetY = 0;
-  context.lineWidth = Math.max(2 * ratio, 2);
-  context.strokeStyle = "rgba(94, 234, 212, 0.74)";
-  roundRect(context, rect.x + inset, rect.y + inset, innerWidth, innerHeight, Math.max(0, radius - inset));
-  context.stroke();
-  context.restore();
-
-  context.save();
-  context.globalAlpha = 0.28;
-  context.fillStyle = selectedTreemapGradient(context, rect, base);
-  roundRect(context, rect.x + inset, rect.y + inset, innerWidth, innerHeight, Math.max(0, radius - inset));
+  context.shadowColor = "rgba(2, 6, 23, 0.38)";
+  context.shadowBlur = 22 * ratio;
+  context.shadowOffsetY = 8 * ratio;
+  context.fillStyle = colorWithAlpha(mixColor(base, "#020617", 0.1), 0.62);
+  roundRect(context, x, y, width, height, focusRadius);
   context.fill();
   context.restore();
 
   context.save();
-  context.lineWidth = Math.max(1.25 * ratio, 1.25);
-  context.strokeStyle = "rgba(255, 255, 255, 0.82)";
-  roundRect(context, rect.x + inset + ratio, rect.y + inset + ratio, Math.max(0, innerWidth - ratio * 2), Math.max(0, innerHeight - ratio * 2), Math.max(0, radius - inset - ratio));
+  context.shadowColor = colorWithAlpha(mixColor(base, "#2dd4bf", 0.66), 0.72);
+  context.shadowBlur = 28 * ratio;
+  context.shadowOffsetY = 0;
+  context.fillStyle = colorWithAlpha(mixColor(base, "#5eead4", 0.16), 0.26);
+  roundRect(context, x, y, width, height, focusRadius);
+  context.fill();
+  context.restore();
+
+  context.save();
+  context.globalAlpha = 0.84;
+  context.fillStyle = selectedTreemapGradient(context, rect, base);
+  roundRect(context, x, y, width, height, focusRadius);
+  context.fill();
+  context.restore();
+
+  context.save();
+  roundRect(context, x, y, width, height, focusRadius);
+  context.clip();
+  const sheen = context.createLinearGradient(x, y, x + width, y + height);
+  sheen.addColorStop(0, "rgba(255, 255, 255, 0)");
+  sheen.addColorStop(0.18, "rgba(255, 255, 255, 0.36)");
+  sheen.addColorStop(0.34, "rgba(255, 255, 255, 0.08)");
+  sheen.addColorStop(1, "rgba(255, 255, 255, 0)");
+  context.fillStyle = sheen;
+  context.fillRect(x, y, width, height);
+  context.restore();
+
+  context.save();
+  context.lineWidth = Math.max(2.25 * ratio, 2.25);
+  const rim = context.createLinearGradient(x, y, x + width, y + height);
+  rim.addColorStop(0, "rgba(255, 255, 255, 0.95)");
+  rim.addColorStop(0.42, "rgba(125, 211, 252, 0.72)");
+  rim.addColorStop(1, "rgba(15, 23, 42, 0.88)");
+  context.strokeStyle = rim;
+  roundRect(context, x, y, width, height, focusRadius);
   context.stroke();
   context.restore();
+
+  context.save();
+  context.lineWidth = Math.max(1.1 * ratio, 1.1);
+  context.strokeStyle = "rgba(255, 255, 255, 0.86)";
+  roundRect(
+    context,
+    x + 1.25 * ratio,
+    y + 1.25 * ratio,
+    Math.max(0, width - 2.5 * ratio),
+    Math.max(0, height - 2.5 * ratio),
+    Math.max(0, focusRadius - 1.25 * ratio),
+  );
+  context.stroke();
+  context.restore();
+}
+
+function colorWithAlpha(color: string, alpha: number): string {
+  const rgb = color.startsWith("rgb") ? rgbString(color) : hexRgb(color);
+  return `rgba(${rgb.red}, ${rgb.green}, ${rgb.blue}, ${alpha})`;
 }
 
 function mixColor(left: string, right: string, amount: number): string {
@@ -3085,6 +3133,12 @@ function hexRgb(hex: string): { red: number; green: number; blue: number } {
     green: Number.parseInt(value.slice(2, 4), 16),
     blue: Number.parseInt(value.slice(4, 6), 16),
   };
+}
+
+function rgbString(color: string): { red: number; green: number; blue: number } {
+  const values = color.match(/\d+(\.\d+)?/g)?.slice(0, 3).map(Number);
+  if (!values || values.length < 3) return { red: 0, green: 0, blue: 0 };
+  return { red: values[0], green: values[1], blue: values[2] };
 }
 
 function roundRect(
