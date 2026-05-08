@@ -578,6 +578,7 @@ test("call graph stack edge labels render as plain overlay text above edges", as
   await expect(label).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(label).toHaveCSS("border-top-width", "0px");
   await expect(label).toHaveCSS("box-shadow", "none");
+  expect(await edgeLabelsOverlapNodes(page)).toBe(false);
 });
 
 test("call graph node slider is the only branch limit and preserves the viewport", async ({ page }) => {
@@ -758,6 +759,25 @@ test("unmeasured-only filtering does not crash the treemap", async ({ page }) =>
   await expect(page.getByText("Stackwise")).toBeVisible();
   await expect(page.getByText("No positive own-frame values match the current filters.")).toBeVisible();
 });
+
+async function edgeLabelsOverlapNodes(page: Page): Promise<boolean> {
+  return page.locator(".graphShell").evaluate((graphShell) => {
+    const labels = [...graphShell.querySelectorAll<HTMLElement>(".callEdgeLabel")].map((element) =>
+      element.getBoundingClientRect(),
+    );
+    const nodes = [...graphShell.querySelectorAll<HTMLElement>(".callNode")].map((element) =>
+      element.getBoundingClientRect(),
+    );
+    return labels.some((label) =>
+      nodes.some((node) =>
+        label.left < node.right &&
+        label.right > node.left &&
+        label.top < node.bottom &&
+        label.bottom > node.top,
+      ),
+    );
+  });
+}
 
 function symbolFixture(id: number, demangled: string, modulePath: string[], own = 8 + (id % 24)) {
   return {

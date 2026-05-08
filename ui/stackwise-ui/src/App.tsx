@@ -1874,8 +1874,15 @@ type StackwiseFlowNode = FlowNode<FlowData, "stackwise">;
 type FlowEdgeData = {
   label: string;
   kind: GraphEdgeKind;
+  labelBlockRects: LabelBlockRect[];
 };
 type StackwiseFlowEdge = FlowEdge<FlowEdgeData, "stackwise">;
+type LabelBlockRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 
 const nodeTypes = { stackwise: StackwiseGraphNode };
 const edgeTypes = { stackwise: StackwiseGraphEdge };
@@ -2205,11 +2212,15 @@ function StackwiseGraphEdge({
     targetPosition,
   });
   const label = data?.label;
+  const labelRect = label == null ? null : edgeLabelRect(label, labelX, labelY);
+  const labelOverlapsNode = labelRect != null && (data?.labelBlockRects ?? []).some((rect) =>
+    rectsOverlap(labelRect, expandRect(rect, 3)),
+  );
 
   return (
     <>
       <BaseEdge path={path} markerEnd={markerEnd} />
-      {label ? (
+      {label && !labelOverlapsNode ? (
         <EdgeLabelRenderer>
           <div
             className={`callEdgeLabel ${data?.kind ?? "direct_call"}`}
@@ -2542,6 +2553,12 @@ function layoutFlowGraph(
       draggable: false,
     };
   });
+  const labelBlockRects = nodes.map((node) => ({
+    x: node.position.x,
+    y: node.position.y,
+    width: node.width ?? node.measured?.width ?? 0,
+    height: node.height ?? node.measured?.height ?? 0,
+  }));
 
   const edges = graphEdges.map<StackwiseFlowEdge>((edge) => ({
     id: edge.id,
@@ -2551,6 +2568,7 @@ function layoutFlowGraph(
     data: {
       label: graphEdgeLabel(edge),
       kind: edge.kind,
+      labelBlockRects,
     },
     markerEnd: { type: MarkerType.ArrowClosed },
     className: `callEdge ${edge.kind}`,
@@ -2577,6 +2595,35 @@ function graphWorkspaceExtent(nodes: StackwiseFlowNode[]): CoordinateExtent {
     [minX - GRAPH_WORKSPACE_MARGIN, minY - GRAPH_WORKSPACE_MARGIN],
     [maxX + GRAPH_WORKSPACE_MARGIN, maxY + GRAPH_WORKSPACE_MARGIN],
   ];
+}
+
+function edgeLabelRect(label: string, labelX: number, labelY: number): LabelBlockRect {
+  const width = Math.max(34, label.length * 7.5);
+  const height = 16;
+  return {
+    x: labelX - width / 2,
+    y: labelY - 18,
+    width,
+    height,
+  };
+}
+
+function expandRect(rect: LabelBlockRect, amount: number): LabelBlockRect {
+  return {
+    x: rect.x - amount,
+    y: rect.y - amount,
+    width: rect.width + amount * 2,
+    height: rect.height + amount * 2,
+  };
+}
+
+function rectsOverlap(left: LabelBlockRect, right: LabelBlockRect): boolean {
+  return (
+    left.x < right.x + right.width &&
+    left.x + left.width > right.x &&
+    left.y < right.y + right.height &&
+    left.y + left.height > right.y
+  );
 }
 
 function worstPathGraphSlice(
