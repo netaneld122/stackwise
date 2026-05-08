@@ -73,6 +73,7 @@ import {
   formatBytes,
   groupColor,
   groupPriority,
+  metricValue,
   primaryCrateName,
   symbolCrate,
   type MeasurementFilter,
@@ -405,6 +406,8 @@ function ReportView({ report }: { report: StackwiseReport }) {
       left={
         <ModuleList
           moduleTree={moduleTree}
+          symbols={report.symbols}
+          metric={metric}
           includedModules={includedModules}
           setIncludedModules={setIncludedModules}
           expandedModules={expandedModules}
@@ -842,12 +845,16 @@ function LogoMark() {
 
 function ModuleList({
   moduleTree,
+  symbols,
+  metric,
   includedModules,
   setIncludedModules,
   expandedModules,
   setExpandedModules,
 }: {
   moduleTree: ModuleTree;
+  symbols: SymbolReport[];
+  metric: Metric;
   includedModules: Set<string> | null;
   setIncludedModules: Dispatch<SetStateAction<Set<string> | null>>;
   expandedModules: Set<string>;
@@ -897,6 +904,12 @@ function ModuleList({
           const selection = moduleSelectionState(node, activeSymbolIds);
           const hasChildren = node.children.length > 0;
           const expanded = expandedModules.has(node.key);
+          const visibleMetricCount = countPositiveMetricSymbols(node, symbols, metric);
+          const totalSymbolCount = node.symbolIds.size;
+          const symbolMeta =
+            visibleMetricCount === totalSymbolCount
+              ? `${totalSymbolCount.toLocaleString()} symbols`
+              : `${visibleMetricCount.toLocaleString()}/${totalSymbolCount.toLocaleString()} shown`;
           return (
             <div
               className={`moduleRow${selection === "checked" ? " active" : ""}${selection === "mixed" ? " mixed" : ""}`}
@@ -937,7 +950,12 @@ function ModuleList({
                   <span className="swatch" style={{ background: node.color }} />
                   <strong>{node.name}</strong>
                 </span>
-                <span className="moduleMeta">{node.symbolIds.size.toLocaleString()} symbols</span>
+                <span
+                  className="moduleMeta"
+                  title={`${totalSymbolCount.toLocaleString()} total symbols; ${visibleMetricCount.toLocaleString()} have positive ${metricLabel(metric)} values and can appear in the treemap.`}
+                >
+                  {symbolMeta}
+                </span>
               </div>
             </div>
           );
@@ -2918,6 +2936,15 @@ function moduleSelectionState(node: ModuleNode, activeSymbolIds: Set<number> | n
   }
   if (selected === 0) return "unchecked";
   return selected === node.symbolIds.size ? "checked" : "mixed";
+}
+
+function countPositiveMetricSymbols(node: ModuleNode, symbols: SymbolReport[], metric: Metric): number {
+  let count = 0;
+  for (const symbolId of node.symbolIds) {
+    const symbol = symbols[symbolId];
+    if (symbol && metricValue(symbol, metric) > 0) count += 1;
+  }
+  return count;
 }
 
 function toggleModuleSelection(
