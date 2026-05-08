@@ -1791,6 +1791,13 @@ function TreemapCanvas({
           const rect = hitTest(event);
           setSelectedId(rect?.symbol.id ?? null);
         }}
+        onDoubleClick={(event) => {
+          setContextMenu(null);
+          const rect = hitTest(event);
+          if (!rect) return;
+          setSelectedId(rect.symbol.id);
+          onShowInCallGraph(rect.symbol.id);
+        }}
         onContextMenu={(event) => {
           event.preventDefault();
           const rect = hitTest(event);
@@ -1872,6 +1879,7 @@ type FlowData = {
   dimmed: boolean;
   branchHighlighted: boolean;
   onSymbolContextMenu?: (event: ReactMouseEvent<HTMLElement>, graphNode: GraphNode) => void;
+  onSymbolDoubleClick?: (graphNode: Extract<GraphNode, { symbol: SymbolReport }>) => void;
   onRevealMore?: (ownerId: number, hiddenCount: number) => void;
 };
 type StackwiseFlowNode = FlowNode<FlowData, "stackwise">;
@@ -1972,10 +1980,15 @@ function CallGraphView({
       data: {
         ...node.data,
         onSymbolContextMenu: openSymbolContextMenu,
+        onSymbolDoubleClick: (graphNode) => {
+          setContextMenu(null);
+          setSelectedId(graphNode.symbol.id);
+          onShowInTreemap(graphNode.symbol.id);
+        },
         onRevealMore,
       },
     })),
-    [nodes, onRevealMore, openSymbolContextMenu],
+    [nodes, onRevealMore, onShowInTreemap, openSymbolContextMenu, setSelectedId],
   );
   const fitKey = useMemo(
     () => `${focused.rootId}:${direction}:${highlightedWorstBranchRootId ?? "all"}:${layout}:${[...edgeKinds].sort().join(",")}:${symbols.length}`,
@@ -2044,11 +2057,14 @@ function CallGraphView({
           event.preventDefault();
           setContextMenu(null);
         }}
-        onNodeClick={(_, node) => {
+        onNodeClick={(event, node) => {
           setContextMenu(null);
           const graphNode = node.data.graphNode;
           if ("symbol" in graphNode) {
             setSelectedId(graphNode.symbol.id);
+            if (event.detail >= 2) {
+              onShowInTreemap(graphNode.symbol.id);
+            }
           } else if (graphNode.markerKind === "limit" && graphNode.hiddenCount != null) {
             onRevealMore(graphNode.ownerId, graphNode.hiddenCount);
           }
@@ -2180,6 +2196,11 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
       style={{ "--node-color": data.color } as CSSProperties}
       title={symbol.demangled}
       onContextMenu={(event) => data.onSymbolContextMenu?.(event, node)}
+      onDoubleClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        data.onSymbolDoubleClick?.(node);
+      }}
     >
       <Handle type="target" position={handles.target} isConnectable={false} />
       <Handle type="source" position={handles.source} isConnectable={false} />

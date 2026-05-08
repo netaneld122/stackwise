@@ -414,6 +414,40 @@ test("cross-navigates symbols between treemap and call graph context menus", asy
   await expect(page.locator(".detailCard")).toContainText(/demo::(?:main|leaf)/);
 });
 
+test("double-click cross-navigates symbols between treemap and call graph", async ({ page }) => {
+  const symbols = [
+    symbolFixture(0, "demo::main", ["demo"], 16),
+    symbolFixture(1, "demo::leaf", ["demo"], 64),
+  ];
+  await page.route("/report.json", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(reportFixture(symbols, [edgeFixture(0, 1)])),
+    });
+  });
+
+  await page.goto("/");
+  const treemapCanvas = page.locator(".treemapShell canvas");
+  const treemapBox = await treemapCanvas.boundingBox();
+  if (!treemapBox) throw new Error("Expected treemap canvas bounds");
+  await page.mouse.dblclick(treemapBox.x + treemapBox.width * 0.35, treemapBox.y + treemapBox.height * 0.5);
+
+  await expect(page.getByRole("tab", { name: "Call Graph" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".graphFocusStatus")).toContainText("Pinned focus");
+  const selectedGraphNode = page.locator(".symbolNode.selected");
+  await expect(selectedGraphNode).toBeVisible();
+
+  const selectedGraphNodeBox = await selectedGraphNode.boundingBox();
+  if (!selectedGraphNodeBox) throw new Error("Expected selected graph node bounds");
+  await page.mouse.dblclick(
+    selectedGraphNodeBox.x + selectedGraphNodeBox.width / 2,
+    selectedGraphNodeBox.y + selectedGraphNodeBox.height / 2,
+  );
+
+  await expect(page.getByRole("tab", { name: "Stack Treemap" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".detailCard")).toContainText(/demo::(?:main|leaf)/);
+});
+
 test("renders call graph minimap nodes for larger reports", async ({ page }) => {
   const symbols = Array.from({ length: 12 }, (_, id) => ({
     id,
