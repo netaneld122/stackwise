@@ -339,6 +339,32 @@ async function graphZoom(page: Page): Promise<number> {
   });
 }
 
+async function minimapMaskScreenRect(page: Page): Promise<{ x: number; y: number; width: number; height: number }> {
+  return page.locator(".callGraphMiniMap .react-flow__minimap-svg").evaluate((svgElement) => {
+    const svg = svgElement as SVGSVGElement;
+    const mask = svg.querySelector<SVGPathElement>(".react-flow__minimap-mask");
+    if (!mask) throw new Error("Expected minimap mask");
+    const d = mask.getAttribute("d") ?? "";
+    const match = d.match(/z\s*M(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)h(-?\d+(?:\.\d+)?)v(-?\d+(?:\.\d+)?)h/);
+    if (!match) throw new Error(`Unexpected minimap mask path: ${d}`);
+    const [, xRaw, yRaw, widthRaw, heightRaw] = match;
+    const viewBox = svg.viewBox.baseVal;
+    const bounds = svg.getBoundingClientRect();
+    const scaleX = bounds.width / viewBox.width;
+    const scaleY = bounds.height / viewBox.height;
+    const x = Number(xRaw);
+    const y = Number(yRaw);
+    const width = Number(widthRaw);
+    const height = Number(heightRaw);
+    return {
+      x: bounds.left + (x - viewBox.x) * scaleX,
+      y: bounds.top + (y - viewBox.y) * scaleY,
+      width: width * scaleX,
+      height: height * scaleY,
+    };
+  });
+}
+
 test("renders call graph minimap nodes for larger reports", async ({ page }) => {
   const symbols = Array.from({ length: 12 }, (_, id) => ({
     id,
@@ -409,6 +435,18 @@ test("renders call graph minimap nodes for larger reports", async ({ page }) => 
   await expect(page.locator(".callGraphMiniMap")).toBeVisible();
   await expect(page.locator(".callGraphMiniMap title")).toHaveText("Call graph minimap");
   await expect.poll(async () => page.locator(".callGraphMiniMap .react-flow__minimap-node").count()).toBeGreaterThan(8);
+  const beforeDrag = await minimapMaskScreenRect(page);
+  await page.mouse.move(beforeDrag.x + beforeDrag.width / 2, beforeDrag.y + beforeDrag.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(beforeDrag.x + beforeDrag.width / 2 + 24, beforeDrag.y + beforeDrag.height / 2 + 13, { steps: 4 });
+  await page.mouse.up();
+  const afterDrag = await minimapMaskScreenRect(page);
+  const deltaX = afterDrag.x + afterDrag.width / 2 - (beforeDrag.x + beforeDrag.width / 2);
+  const deltaY = afterDrag.y + afterDrag.height / 2 - (beforeDrag.y + beforeDrag.height / 2);
+  expect(deltaX).toBeGreaterThan(20);
+  expect(deltaX).toBeLessThan(28);
+  expect(deltaY).toBeGreaterThan(9);
+  expect(deltaY).toBeLessThan(17);
 });
 
 test("call graph expands truncated branches with reveal-more markers", async ({ page }) => {

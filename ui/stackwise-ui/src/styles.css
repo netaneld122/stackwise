@@ -1360,6 +1360,18 @@ dd {
   box-shadow: 0 16px 34px rgba(15, 23, 42, 0.14);
 }
 
+.tightMiniMapDragLayer,
+.tightMiniMapDragLayer .callGraphMiniMap,
+.tightMiniMapDragLayer .react-flow__minimap-mask {
+  cursor: grab;
+}
+
+.tightMiniMapDragLayer:active,
+.tightMiniMapDragLayer:active .callGraphMiniMap,
+.tightMiniMapDragLayer:active .react-flow__minimap-mask {
+  cursor: grabbing;
+}
+
 .callGraphMiniMap .react-flow__minimap-svg {
   display: block;
 }

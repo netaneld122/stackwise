@@ -26,6 +26,7 @@ import {
   type FitViewOptions,
   type Node as FlowNode,
   type NodeProps,
+  useReactFlow,
 } from "@xyflow/react";
 import {
   Copy,
@@ -2011,22 +2012,8 @@ function CallGraphView({
         <Background color="var(--graph-grid)" gap={22} />
         <FlowControls showInteractive={false} />
         {nodes.length > 8 ? (
-          <MiniMap<StackwiseFlowNode>
-            ariaLabel="Call graph minimap"
-            className="callGraphMiniMap"
-            nodeColor={(node) => node.data.color}
-            nodeStrokeColor={(node) => (node.data.selected ? "var(--selected-outline)" : "var(--minimap-node-stroke)")}
-            nodeClassName={(node) => `miniNode ${node.data.graphNode.relation}`}
-            nodeBorderRadius={7}
-            nodeStrokeWidth={2}
-            bgColor="var(--minimap-bg)"
-            maskColor="var(--minimap-mask)"
-            maskStrokeColor="var(--accent)"
-            maskStrokeWidth={2}
-            offsetScale={18}
-            pannable
-            style={{ width: 176, height: 124 }}
-            onNodeClick={(_, node) => {
+          <TightMiniMap
+            onNodeClick={(node) => {
               const graphNode = node.data.graphNode;
               if ("symbol" in graphNode) setSelectedId(graphNode.symbol.id);
             }}
@@ -2129,6 +2116,139 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
         <span><b>Cumulative</b>{formatBytes(node.cumulativeStackBytes)}</span>
         <span><b>Worst branch</b>{formatBytes(node.visibleWorstStackBytes)}</span>
       </div>
+    </div>
+  );
+}
+
+function TightMiniMap({ onNodeClick }: { onNodeClick: (node: StackwiseFlowNode) => void }) {
+  const flow = useReactFlow<StackwiseFlowNode, FlowEdge>();
+  const dragState = useRef<{
+    pointerId: number;
+    offsetX: number;
+    offsetY: number;
+    zoom: number;
+  } | null>(null);
+
+  const pointerToFlow = (event: PointerEvent | ReactPointerEvent<HTMLElement>): { x: number; y: number } | null => {
+    const svg = (event.target instanceof Element
+      ? event.target.closest<SVGSVGElement>(".react-flow__minimap-svg")
+      : null);
+    if (!svg) return null;
+    const viewBox = svg.viewBox.baseVal;
+    const rect = svg.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0 || viewBox.width <= 0 || viewBox.height <= 0) return null;
+    return {
+      x: viewBox.x + ((event.clientX - rect.left) / rect.width) * viewBox.width,
+      y: viewBox.y + ((event.clientY - rect.top) / rect.height) * viewBox.height,
+    };
+  };
+
+  const visibleFlowRect = (zoom: number) => {
+    const flowElement = document.querySelector<HTMLElement>(".graphShell .react-flow");
+    const rect = flowElement?.getBoundingClientRect();
+    const viewport = flow.getViewport();
+    const width = (rect?.width ?? 0) / zoom;
+    const height = (rect?.height ?? 0) / zoom;
+    return {
+      x: -viewport.x / zoom,
+      y: -viewport.y / zoom,
+      width,
+      height,
+    };
+  };
+
+  const dragMinimap = (event: PointerEvent | ReactPointerEvent<HTMLElement>) => {
+    const state = dragState.current;
+    const pointer = pointerToFlow(event);
+    if (!state || !pointer) return;
+    const nextX = pointer.x - state.offsetX;
+    const nextY = pointer.y - state.offsetY;
+    void flow.setViewport(
+      {
+        x: -nextX * state.zoom,
+        y: -nextY * state.zoom,
+        zoom: state.zoom,
+      },
+      { duration: 0 },
+    );
+  };
+
+  const beginMinimapDrag = (event: PointerEvent | ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const pointer = pointerToFlow(event);
+    if (!pointer) return;
+    const zoom = flow.getZoom();
+    const visible = visibleFlowRect(zoom);
+    if (visible.width <= 0 || visible.height <= 0) return;
+
+    const pointerIsInsideViewport =
+      pointer.x >= visible.x &&
+      pointer.x <= visible.x + visible.width &&
+      pointer.y >= visible.y &&
+      pointer.y <= visible.y + visible.height;
+    dragState.current = {
+      pointerId: event.pointerId,
+      offsetX: pointerIsInsideViewport ? pointer.x - visible.x : visible.width / 2,
+      offsetY: pointerIsInsideViewport ? pointer.y - visible.y : visible.height / 2,
+      zoom,
+    };
+    event.preventDefault();
+    event.stopPropagation();
+    dragMinimap(event);
+  };
+
+  const endMinimapDrag = (event: PointerEvent | ReactPointerEvent<HTMLDivElement>) => {
+    if (dragState.current?.pointerId !== event.pointerId) return;
+    dragState.current = null;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Element) || !event.target.closest(".callGraphMiniMap")) return;
+      beginMinimapDrag(event);
+    };
+    const onPointerMove = (event: PointerEvent) => {
+      if (dragState.current?.pointerId !== event.pointerId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      dragMinimap(event);
+    };
+    const onPointerUp = (event: PointerEvent) => {
+      endMinimapDrag(event);
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("pointermove", onPointerMove, true);
+    window.addEventListener("pointerup", onPointerUp, true);
+    window.addEventListener("pointercancel", onPointerUp, true);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("pointermove", onPointerMove, true);
+      window.removeEventListener("pointerup", onPointerUp, true);
+      window.removeEventListener("pointercancel", onPointerUp, true);
+    };
+  });
+
+  return (
+    <div className="tightMiniMapDragLayer">
+      <MiniMap<StackwiseFlowNode>
+        ariaLabel="Call graph minimap"
+        className="callGraphMiniMap"
+        nodeColor={(node) => node.data.color}
+        nodeStrokeColor={(node) => (node.data.selected ? "var(--selected-outline)" : "var(--minimap-node-stroke)")}
+        nodeClassName={(node) => `miniNode ${node.data.graphNode.relation}`}
+        nodeBorderRadius={7}
+        nodeStrokeWidth={2}
+        bgColor="var(--minimap-bg)"
+        maskColor="var(--minimap-mask)"
+        maskStrokeColor="var(--accent)"
+        maskStrokeWidth={2}
+        offsetScale={18}
+        pannable={false}
+        style={{ width: 176, height: 124 }}
+        onNodeClick={(_, node) => onNodeClick(node)}
+      />
     </div>
   );
 }
