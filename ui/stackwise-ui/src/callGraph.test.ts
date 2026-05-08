@@ -33,6 +33,23 @@ describe("call graph helpers", () => {
     expect(graph.edges.map((graphEdge) => `${graphEdge.source}->${graphEdge.target}`)).toEqual(["s:0->s:1"]);
   });
 
+  it("omits external call boundaries from the visual graph", () => {
+    const symbols = [symbol(0, "demo::main", 16)];
+    const report = reportWith(symbols, [
+      { caller: 0, callee: null, kind: "external_call", target_address: 0xfeed, confidence: "medium" },
+      { caller: 0, callee: null, kind: "indirect_call", target_address: null, confidence: "medium" },
+    ]);
+
+    const graph = buildFocusedCallGraph(report, symbols, {
+      rootId: 0,
+      maxNodes: 20,
+      edgeKinds: allEdges,
+    });
+
+    expect(graph.nodes.map((node) => node.id).sort()).toEqual(["b:0:indirect_call:unknown", "s:0"]);
+    expect(graph.edges.map((graphEdge) => graphEdge.kind).sort()).toEqual(["indirect_call"]);
+  });
+
   it("builds the full caller graph when requested", () => {
     const symbols = [symbol(0, "demo::main", 16), symbol(1, "demo::caller", 32), symbol(2, "demo::grandcaller", 8)];
     const report = reportWith(symbols, [edge(1, 0, "direct_call"), edge(2, 1, "direct_call")]);

@@ -191,7 +191,7 @@ export function buildFocusedCallGraph(
       if (!options.edgeKinds.has(edge.kind)) continue;
       if (edge.callee != null && nodeIds.has(edge.callee)) {
         addEdge(edge, symbolNodeId(edge.caller), symbolNodeId(edge.callee));
-      } else if (edge.callee == null && (edge.kind === "indirect_call" || edge.kind === "external_call")) {
+      } else if (edge.callee == null && edge.kind === "indirect_call") {
         const boundary = boundaryNode(edge, id);
         nodes.push(boundary);
         addEdge(edge, symbolNodeId(id), boundary.id);
@@ -661,11 +661,10 @@ function symbolIdFromNodeId(id: string): number | null {
 }
 
 function boundaryNode(edge: EdgeReport, ownerId: number): GraphBoundaryNode {
-  const label = edge.kind === "indirect_call" ? "Indirect call" : "External call";
   const target = edge.target_address == null ? "target unknown" : `0x${edge.target_address.toString(16)}`;
   return {
     id: `b:${ownerId}:${edge.kind}:${edge.target_address ?? "unknown"}`,
-    label,
+    label: "Indirect call",
     detail: target,
     ownerId,
     relation: "callee",

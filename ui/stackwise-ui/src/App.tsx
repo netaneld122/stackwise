@@ -111,7 +111,7 @@ type GraphNavigationHistory = {
   future: GraphNavigationState[];
 };
 
-const defaultGraphEdgeKinds: EdgeKind[] = ["direct_call", "tail_call", "indirect_call", "external_call"];
+const defaultGraphEdgeKinds: EdgeKind[] = ["direct_call", "tail_call", "indirect_call"];
 const defaultGraphNavigationState: GraphNavigationState = {
   rootId: null,
   nodeLimit: DEFAULT_CALL_GRAPH_NODE_LIMIT,
@@ -570,7 +570,7 @@ function GraphControls({
           </strong>
         </label>
         <div className="edgeToggles" aria-label="Call edge filters">
-          {(["direct_call", "tail_call", "indirect_call", "external_call"] as EdgeKind[]).map((kind) => (
+          {defaultGraphEdgeKinds.map((kind) => (
             <button
               className={edgeKinds.has(kind) ? "active" : ""}
               key={kind}
