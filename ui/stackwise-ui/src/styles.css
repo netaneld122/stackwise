@@ -1642,27 +1642,25 @@ dd {
 
 .callEdgeLabel {
   position: absolute;
-  z-index: 3;
-  padding: 2px 7px;
-  border: 1px solid color-mix(in srgb, var(--graph-edge-label-ink), transparent 78%);
-  border-radius: 999px;
-  background: var(--graph-edge-label-bg);
-  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
+  z-index: 8;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
   color: var(--graph-edge-label-ink);
   font-size: 11px;
   font-weight: 800;
   line-height: 1.1;
   pointer-events: none;
+  text-shadow:
+    0 1px 3px var(--graph-panel-bg),
+    1px 0 3px var(--graph-panel-bg),
+    -1px 0 3px var(--graph-panel-bg);
   white-space: nowrap;
 }
 
 .callEdgeLabel.external_call,
 .callEdgeLabel.limit {
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
   color: var(--muted);
   font-size: 10px;
   font-weight: 700;

@@ -560,6 +560,26 @@ test("call graph handles are read-only and cannot draw new edges", async ({ page
   await expect(page.locator(".react-flow__connectionline")).toHaveCount(0);
 });
 
+test("call graph stack edge labels render as plain overlay text above edges", async ({ page }) => {
+  const symbols = [symbolFixture(0, "demo::main", ["demo"], 16), symbolFixture(1, "demo::leaf", ["demo"], 88)];
+  const edges = [edgeFixture(0, 1)];
+
+  await page.route("/report.json", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(reportFixture(symbols, edges)),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Call Graph" }).click();
+  const label = page.locator(".callEdgeLabel.direct_call").first();
+  await expect(label).toHaveText("+88 B");
+  await expect(label).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(label).toHaveCSS("border-top-width", "0px");
+  await expect(label).toHaveCSS("box-shadow", "none");
+});
+
 test("call graph node slider is the only branch limit and preserves the viewport", async ({ page }) => {
   const symbols = Array.from({ length: 7 }, (_, id) =>
     symbolFixture(id, id === 0 ? "demo::main" : `demo::f${id}`, ["demo"]),

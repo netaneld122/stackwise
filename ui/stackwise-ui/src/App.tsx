@@ -2214,7 +2214,7 @@ function StackwiseGraphEdge({
           <div
             className={`callEdgeLabel ${data?.kind ?? "direct_call"}`}
             style={{
-              transform: `translate(-50%, 8px) translate(${labelX}px, ${labelY}px)`,
+              transform: `translate(-50%, -18px) translate(${labelX}px, ${labelY}px)`,
             }}
           >
             {label}
