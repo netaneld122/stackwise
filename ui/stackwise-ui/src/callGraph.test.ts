@@ -147,6 +147,51 @@ describe("call graph helpers", () => {
     expect(tailEdge?.addedStackBytes).toBe(32);
   });
 
+  it("adds reveal-more markers where callee depth truncates visible branches", () => {
+    const symbols = Array.from({ length: 4 }, (_, id) => symbol(id, id === 0 ? "demo::main" : `demo::f${id}`, 8));
+    const report = reportWith(symbols, [edge(0, 1, "direct_call"), edge(1, 2, "direct_call"), edge(2, 3, "direct_call")]);
+
+    const graph = buildFocusedCallGraph(report, symbols, {
+      rootId: 0,
+      callerDepth: 0,
+      calleeDepth: 1,
+      maxNodes: 20,
+      edgeKinds: allEdges,
+    });
+
+    expect(graph.nodes.map((node) => node.id).sort()).toEqual(["reveal:callee:1", "s:0", "s:1"]);
+    expect(graph.edges.map((graphEdge) => `${graphEdge.source}->${graphEdge.target}:${graphEdge.kind}`).sort()).toEqual([
+      "s:0->s:1:direct_call",
+      "s:1->reveal:callee:1:reveal",
+    ]);
+    const marker = graph.nodes.find((node) => node.id === "reveal:callee:1");
+    expect(marker && "label" in marker ? marker.label : null).toBe("Reveal more");
+    expect(marker && "detail" in marker ? marker.detail : null).toBe("+2 callees");
+    expect(marker && "revealDirection" in marker ? marker.revealDirection : null).toBe("callee");
+  });
+
+  it("adds reveal-more markers where caller depth truncates visible callers", () => {
+    const symbols = Array.from({ length: 3 }, (_, id) => symbol(id, id === 0 ? "demo::main" : `demo::caller${id}`, 8));
+    const report = reportWith(symbols, [edge(1, 0, "direct_call"), edge(2, 1, "direct_call")]);
+
+    const graph = buildFocusedCallGraph(report, symbols, {
+      rootId: 0,
+      callerDepth: 0,
+      calleeDepth: 0,
+      maxNodes: 20,
+      edgeKinds: allEdges,
+    });
+
+    expect(graph.nodes.map((node) => node.id).sort()).toEqual(["reveal:caller:0", "s:0"]);
+    expect(graph.edges.map((graphEdge) => `${graphEdge.source}->${graphEdge.target}:${graphEdge.kind}`)).toEqual([
+      "reveal:caller:0->s:0:reveal",
+    ]);
+    const marker = graph.nodes.find((node) => node.id === "reveal:caller:0");
+    expect(marker && "label" in marker ? marker.label : null).toBe("Reveal more");
+    expect(marker && "detail" in marker ? marker.detail : null).toBe("+2 callers");
+    expect(marker && "revealDirection" in marker ? marker.revealDirection : null).toBe("caller");
+  });
+
   it("keeps the longest root chain prefix and marks hidden callees when pruning a chain", () => {
     const symbols = Array.from({ length: 6 }, (_, id) => symbol(id, id === 0 ? "demo::main" : `demo::f${id}`, 1));
     const report = reportWith(symbols, symbols.slice(0, -1).map((source) => edge(source.id, source.id + 1, "direct_call")));

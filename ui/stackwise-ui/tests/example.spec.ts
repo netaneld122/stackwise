@@ -411,6 +411,39 @@ test("renders call graph minimap nodes for larger reports", async ({ page }) => 
   await expect.poll(async () => page.locator(".callGraphMiniMap .react-flow__minimap-node").count()).toBeGreaterThan(8);
 });
 
+test("call graph expands truncated branches with reveal-more markers", async ({ page }) => {
+  const symbols = Array.from({ length: 7 }, (_, id) =>
+    symbolFixture(id, id === 0 ? "demo::main" : `demo::f${id}`, ["demo"]),
+  );
+  const edges = symbols.slice(0, -1).map((symbol) => edgeFixture(symbol.id, symbol.id + 1));
+
+  await page.route("/report.json", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(reportFixture(symbols, edges)),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Call Graph" }).click();
+  await expect(page.getByRole("combobox", { name: "Callers" })).toHaveCount(0);
+  await expect(page.getByRole("combobox", { name: "Callees" })).toHaveCount(0);
+  await expect(page.locator(".symbolNode.root")).toContainText("demo::main");
+  await expect(page.locator('.symbolNode[title="demo::f2"]')).toBeVisible();
+  await expect(page.locator('.symbolNode[title="demo::f3"]')).toHaveCount(0);
+  const reveal = page.locator(".revealBoundary").filter({ hasText: "Reveal more" });
+  await expect(reveal).toHaveCount(1);
+  await expect(reveal).toContainText("+4 callees");
+
+  await reveal.click();
+  await expect(page.locator('.symbolNode[title="demo::f3"]')).toBeVisible();
+  await expect(page.locator(".revealBoundary")).toContainText("+3 callees");
+  await expect(page.getByRole("button", { name: "Undo graph navigation" })).toBeEnabled();
+  await page.getByRole("button", { name: "Undo graph navigation" }).click();
+  await expect(page.locator('.symbolNode[title="demo::f3"]')).toHaveCount(0);
+  await expect(page.locator(".revealBoundary")).toContainText("+4 callees");
+});
+
 test("call graph node limit prunes huge graphs from the leaves and marks cut points", async ({ page }) => {
   const symbols = [
     symbolFixture(0, "demo::main", ["demo"]),
@@ -421,17 +454,11 @@ test("call graph node limit prunes huge graphs from the leaves and marks cut poi
   for (let branch = 0; branch < 10; branch += 1) {
     const branchId = 1 + branch;
     edges.push(edgeFixture(0, branchId));
-    for (let mid = 0; mid < 10; mid += 1) {
-      const midId = nextId;
-      symbols.push(symbolFixture(midId, `demo::branch${branch}::mid${mid}`, ["demo", `branch${branch}`]));
-      edges.push(edgeFixture(branchId, midId));
+    for (let leaf = 0; leaf < 60; leaf += 1) {
+      const leafId = nextId;
+      symbols.push(symbolFixture(leafId, `demo::branch${branch}::leaf${leaf}`, ["demo", `branch${branch}`]));
+      edges.push(edgeFixture(branchId, leafId));
       nextId += 1;
-      for (let leaf = 0; leaf < 5; leaf += 1) {
-        const leafId = nextId;
-        symbols.push(symbolFixture(leafId, `demo::branch${branch}::mid${mid}::leaf${leaf}`, ["demo", `branch${branch}`]));
-        edges.push(edgeFixture(midId, leafId));
-        nextId += 1;
-      }
     }
   }
 
@@ -453,7 +480,7 @@ test("call graph node limit prunes huge graphs from the leaves and marks cut poi
   await expect(slider).toHaveValue("480");
   await expect(page.locator(".symbolNode.root")).toContainText("demo::main");
   await expect(page.locator('.symbolNode[title="demo::branch0"]')).toBeVisible();
-  await expect(page.locator('.symbolNode[title="demo::branch0::mid0::leaf0"]')).toBeVisible();
+  await expect(page.locator('.symbolNode[title="demo::branch0::leaf0"]')).toBeVisible();
   await expect(page.locator(".graphNotice")).toContainText("131 reachable symbols pruned");
   await expect(page.locator(".limitBoundary").first()).toContainText("hidden callee");
   await expect(page.locator(".callEdge.limit").first()).toBeVisible();

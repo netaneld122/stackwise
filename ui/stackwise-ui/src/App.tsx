@@ -50,6 +50,7 @@ import {
   DEFAULT_CALL_GRAPH_NODE_LIMIT,
   symbolNodeId,
   type GraphNode,
+  type GraphRevealDirection,
 } from "./callGraph";
 import {
   agentLaunchErrorMessage,
@@ -97,6 +98,9 @@ type GraphNavigationState = {
   mode: GraphNavigationMode;
   actionSymbolId: number | null;
   highlightBranchRootId: number | null;
+  revealFocusId: number | null;
+  expandedCallerIds: number[];
+  expandedCalleeIds: number[];
 };
 type GraphNavigationHistory = {
   past: GraphNavigationState[];
@@ -108,17 +112,17 @@ const defaultGraphEdgeKinds: EdgeKind[] = ["direct_call", "tail_call", "indirect
 const defaultGraphNavigationState: GraphNavigationState = {
   rootId: null,
   callerDepth: 0,
-  calleeDepth: 4,
+  calleeDepth: 2,
   nodeLimit: DEFAULT_CALL_GRAPH_NODE_LIMIT,
   layout: "TB",
   edgeKinds: defaultGraphEdgeKinds,
   mode: "default",
   actionSymbolId: null,
   highlightBranchRootId: null,
+  revealFocusId: null,
+  expandedCallerIds: [],
+  expandedCalleeIds: [],
 };
-const callGraphCallerDepthOptions = [0, 1, 2, 3];
-const callGraphCalleeDepthOptions = Array.from({ length: 13 }, (_, index) => index);
-
 const graphLayoutOptions: Array<{ value: GraphLayout; label: string }> = [
   { value: "TB", label: "Top down" },
   { value: "LR", label: "Left to right" },
@@ -217,6 +221,8 @@ function ReportView({ report }: { report: StackwiseReport }) {
   const graphState = graphHistory.present;
   const { rootId: graphRootId, callerDepth, calleeDepth, nodeLimit, layout: graphLayout } = graphState;
   const edgeKinds = useMemo(() => new Set(graphState.edgeKinds), [graphState.edgeKinds]);
+  const expandedCallerIds = useMemo(() => new Set(graphState.expandedCallerIds), [graphState.expandedCallerIds]);
+  const expandedCalleeIds = useMemo(() => new Set(graphState.expandedCalleeIds), [graphState.expandedCalleeIds]);
   const status = (
     <AnalysisFileStatus
       reportPath={reportPath}
@@ -247,9 +253,11 @@ function ReportView({ report }: { report: StackwiseReport }) {
         calleeDepth,
         maxNodes: Number.MAX_SAFE_INTEGER,
         edgeKinds,
+        expandedCallerIds,
+        expandedCalleeIds,
       });
     },
-    [calleeDepth, callerDepth, edgeKinds, effectiveGraphRoot, report, symbols, viewMode],
+    [calleeDepth, callerDepth, edgeKinds, effectiveGraphRoot, expandedCalleeIds, expandedCallerIds, report, symbols, viewMode],
   );
   const graphNodeLimitMax = Math.max(1, graphLimitStats?.reachableNodeCount ?? nodeLimit);
   const effectiveNodeLimit = clamp(nodeLimit, 1, graphNodeLimitMax);
@@ -273,6 +281,9 @@ function ReportView({ report }: { report: StackwiseReport }) {
           mode: "default",
           actionSymbolId: null,
           highlightBranchRootId: null,
+          revealFocusId: null,
+          expandedCallerIds: [],
+          expandedCalleeIds: [],
         },
       }));
     }
@@ -290,13 +301,25 @@ function ReportView({ report }: { report: StackwiseReport }) {
       return { ...current, edgeKinds: orderedEdgeKinds(next) };
     });
   };
-  const setCallerDepth = (callerDepth: number) => commitGraphNavigation((current) => ({ ...current, callerDepth }));
-  const setCalleeDepth = (calleeDepth: number) => commitGraphNavigation((current) => ({ ...current, calleeDepth }));
   const setNodeLimit = (nodeLimit: number) => commitGraphNavigation((current) => ({ ...current, nodeLimit }));
   const setGraphLayout = (layout: GraphLayout) => commitGraphNavigation((current) => ({ ...current, layout }));
+  const revealMoreGraph = (direction: GraphRevealDirection, ownerId: number) => commitGraphNavigation((current) => {
+    const expandedCallerSet = new Set(current.expandedCallerIds);
+    const expandedCalleeSet = new Set(current.expandedCalleeIds);
+    if (direction === "caller") expandedCallerSet.add(ownerId);
+    else expandedCalleeSet.add(ownerId);
+    return {
+      ...current,
+      expandedCallerIds: [...expandedCallerSet],
+      expandedCalleeIds: [...expandedCalleeSet],
+      highlightBranchRootId: null,
+      revealFocusId: ownerId,
+    };
+  });
   const showWorstBranchHighlight = (symbolId: number) => commitGraphNavigation((current) => ({
     ...current,
     highlightBranchRootId: symbolId,
+    revealFocusId: null,
   }));
   const undoGraphNavigation = () => setGraphHistory(undoGraphHistory);
   const redoGraphNavigation = () => setGraphHistory(redoGraphHistory);
@@ -306,6 +329,9 @@ function ReportView({ report }: { report: StackwiseReport }) {
     mode: "focus",
     actionSymbolId: symbolId,
     highlightBranchRootId: null,
+    revealFocusId: null,
+    expandedCallerIds: [],
+    expandedCalleeIds: [],
   }));
   const showCallersForSymbol = (symbolId: number) => {
     commitGraphNavigation((current) => ({
@@ -317,6 +343,9 @@ function ReportView({ report }: { report: StackwiseReport }) {
       mode: "callers",
       actionSymbolId: symbolId,
       highlightBranchRootId: null,
+      revealFocusId: null,
+      expandedCallerIds: [],
+      expandedCalleeIds: [],
     }));
   };
 
@@ -421,8 +450,6 @@ function ReportView({ report }: { report: StackwiseReport }) {
         </div>
         {viewMode === "call_graph" ? (
           <GraphControls
-            callerDepth={callerDepth}
-            calleeDepth={calleeDepth}
             nodeLimit={effectiveNodeLimit}
             nodeLimitMax={graphNodeLimitMax}
             edgeKinds={edgeKinds}
@@ -433,8 +460,6 @@ function ReportView({ report }: { report: StackwiseReport }) {
             canRedo={graphHistory.future.length > 0}
             onUndo={undoGraphNavigation}
             onRedo={redoGraphNavigation}
-            setCallerDepth={setCallerDepth}
-            setCalleeDepth={setCalleeDepth}
             setNodeLimit={setNodeLimit}
             setGraphLayout={setGraphLayout}
             toggleEdgeKind={toggleEdgeKind}
@@ -450,14 +475,18 @@ function ReportView({ report }: { report: StackwiseReport }) {
               rootId={effectiveGraphRoot}
               callerDepth={callerDepth}
               calleeDepth={calleeDepth}
+              expandedCallerIds={expandedCallerIds}
+              expandedCalleeIds={expandedCalleeIds}
               nodeLimit={effectiveNodeLimit}
               edgeKinds={edgeKinds}
               layout={graphLayout}
+              fitSymbolId={graphState.revealFocusId}
               selectedId={selectedId}
               highlightedWorstBranchRootId={graphState.highlightBranchRootId}
               onPivotSymbol={pivotToSymbol}
               onShowCallers={showCallersForSymbol}
               onShowWorstBranch={showWorstBranchHighlight}
+              onRevealMore={revealMoreGraph}
             />
           )}
         </div>
@@ -467,8 +496,6 @@ function ReportView({ report }: { report: StackwiseReport }) {
 }
 
 function GraphControls({
-  callerDepth,
-  calleeDepth,
   nodeLimit,
   nodeLimitMax,
   edgeKinds,
@@ -479,14 +506,10 @@ function GraphControls({
   canRedo,
   onUndo,
   onRedo,
-  setCallerDepth,
-  setCalleeDepth,
   setNodeLimit,
   setGraphLayout,
   toggleEdgeKind,
 }: {
-  callerDepth: number;
-  calleeDepth: number;
   nodeLimit: number;
   nodeLimitMax: number;
   edgeKinds: ReadonlySet<EdgeKind>;
@@ -497,8 +520,6 @@ function GraphControls({
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
-  setCallerDepth: (value: number) => void;
-  setCalleeDepth: (value: number) => void;
   setNodeLimit: (value: number) => void;
   setGraphLayout: (value: GraphLayout) => void;
   toggleEdgeKind: (kind: EdgeKind) => void;
@@ -506,8 +527,8 @@ function GraphControls({
   const focusLabel = focusMode === "callers" ? "Showing callers" : focusMode === "focus" ? "Pinned focus" : "Default root";
   const FocusIcon = focusMode === "callers" ? GitBranch : focusMode === "focus" ? Pin : RotateCcw;
   const focusTitle = focusSymbol
-    ? `${focusLabel}: ${focusSymbol.demangled}. Callers ${callerDepth}, callees ${calleeDepth}.`
-    : `${focusLabel}. Callers ${callerDepth}, callees ${calleeDepth}.`;
+    ? `${focusLabel}: ${focusSymbol.demangled}. Use Reveal more markers in the graph to expand truncated branches.`
+    : `${focusLabel}. Use Reveal more markers in the graph to expand truncated branches.`;
 
   return (
     <div className="middlePaneControls">
@@ -535,18 +556,6 @@ function GraphControls({
             {graphLayoutOptions.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
-          </select>
-        </label>
-        <label>
-          Callers
-          <select value={callerDepth} onChange={(event) => setCallerDepth(Number(event.target.value))}>
-            {callGraphCallerDepthOptions.map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-        </label>
-        <label>
-          Callees
-          <select value={calleeDepth} onChange={(event) => setCalleeDepth(Number(event.target.value))}>
-            {callGraphCalleeDepthOptions.map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
         </label>
         <label className="nodeLimitControl">
@@ -662,9 +671,16 @@ function sameGraphNavigationState(left: GraphNavigationState, right: GraphNaviga
     left.mode === right.mode &&
     left.actionSymbolId === right.actionSymbolId &&
     left.highlightBranchRootId === right.highlightBranchRootId &&
+    left.revealFocusId === right.revealFocusId &&
+    sameNumberArray(left.expandedCallerIds, right.expandedCallerIds) &&
+    sameNumberArray(left.expandedCalleeIds, right.expandedCalleeIds) &&
     left.edgeKinds.length === right.edgeKinds.length &&
     left.edgeKinds.every((kind, index) => kind === right.edgeKinds[index])
   );
+}
+
+function sameNumberArray(left: number[], right: number[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function orderedEdgeKinds(kinds: ReadonlySet<EdgeKind>): EdgeKind[] {
@@ -1807,6 +1823,7 @@ type FlowData = {
   dimmed: boolean;
   branchHighlighted: boolean;
   onSymbolContextMenu?: (event: ReactMouseEvent<HTMLElement>, graphNode: GraphNode) => void;
+  onRevealMore?: (direction: GraphRevealDirection, ownerId: number) => void;
 };
 type StackwiseFlowNode = FlowNode<FlowData, "stackwise">;
 
@@ -1821,28 +1838,36 @@ function CallGraphView({
   rootId,
   callerDepth,
   calleeDepth,
+  expandedCallerIds,
+  expandedCalleeIds,
   nodeLimit,
   edgeKinds,
   layout,
+  fitSymbolId,
   selectedId,
   highlightedWorstBranchRootId,
   onPivotSymbol,
   onShowCallers,
   onShowWorstBranch,
+  onRevealMore,
 }: {
   report: StackwiseReport;
   symbols: SymbolReport[];
   rootId: number | null;
   callerDepth: number;
   calleeDepth: number;
+  expandedCallerIds: ReadonlySet<number>;
+  expandedCalleeIds: ReadonlySet<number>;
   nodeLimit: number;
   edgeKinds: ReadonlySet<EdgeKind>;
   layout: GraphLayout;
+  fitSymbolId: number | null;
   selectedId: number | null;
   highlightedWorstBranchRootId: number | null;
   onPivotSymbol: (symbolId: number) => void;
   onShowCallers: (symbolId: number) => void;
   onShowWorstBranch: (symbolId: number) => void;
+  onRevealMore: (direction: GraphRevealDirection, ownerId: number) => void;
 }) {
   const { setSelectedId } = useStackwiseStore();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; symbol: SymbolReport } | null>(null);
@@ -1854,8 +1879,10 @@ function CallGraphView({
         calleeDepth,
         maxNodes: nodeLimit,
         edgeKinds,
+        expandedCallerIds,
+        expandedCalleeIds,
       }),
-    [calleeDepth, callerDepth, edgeKinds, nodeLimit, report, rootId, symbols],
+    [calleeDepth, callerDepth, edgeKinds, expandedCalleeIds, expandedCallerIds, nodeLimit, report, rootId, symbols],
   );
   const visibleGraph = useMemo(
     () => worstPathGraphSlice(focused.nodes, focused.edges, highlightedWorstBranchRootId),
@@ -1886,22 +1913,30 @@ function CallGraphView({
       data: {
         ...node.data,
         onSymbolContextMenu: openSymbolContextMenu,
+        onRevealMore,
       },
     })),
-    [nodes, openSymbolContextMenu],
+    [nodes, onRevealMore, openSymbolContextMenu],
   );
   const fitKey = useMemo(
-    () => `${focused.rootId}:${highlightedWorstBranchRootId ?? "all"}:${layout}:${callerDepth}:${calleeDepth}:${nodeLimit}:${[...edgeKinds].sort().join(",")}:${symbols.length}`,
-    [calleeDepth, callerDepth, edgeKinds, focused.rootId, highlightedWorstBranchRootId, layout, nodeLimit, symbols.length],
+    () => `${focused.rootId}:${fitSymbolId ?? "root"}:${highlightedWorstBranchRootId ?? "all"}:${layout}:${[...edgeKinds].sort().join(",")}:${symbols.length}`,
+    [edgeKinds, fitSymbolId, focused.rootId, highlightedWorstBranchRootId, layout, symbols.length],
   );
   const rootFitViewOptions = useMemo<FitViewOptions<StackwiseFlowNode>>(
-    () => ({
-      nodes: focused.rootId == null ? undefined : [{ id: symbolNodeId(focused.rootId) }],
-      padding: 1.2,
-      minZoom: 1.04,
-      maxZoom: 1.18,
-    }),
-    [focused.rootId],
+    () => {
+      const fitIds = fitSymbolId != null
+        ? revealFitNodeIds(focused.edges, fitSymbolId)
+        : focused.rootId == null
+          ? []
+          : rootIntroFitNodeIds(focused.edges, focused.rootId);
+      return {
+        nodes: fitIds.length ? fitIds.map((id) => ({ id })) : undefined,
+        padding: 1.2,
+        minZoom: fitSymbolId == null && fitIds.length <= 3 ? 1.04 : fitSymbolId == null ? 0.72 : 0.24,
+        maxZoom: fitSymbolId == null ? 1.18 : 1.05,
+      };
+    },
+    [fitSymbolId, focused.edges, focused.rootId],
   );
 
   useEffect(() => {
@@ -1953,7 +1988,9 @@ function CallGraphView({
         onNodeClick={(_, node) => {
           setContextMenu(null);
           const graphNode = node.data.graphNode;
-          if ("symbol" in graphNode) setSelectedId(graphNode.symbol.id);
+          if ("symbol" in graphNode) {
+            setSelectedId(graphNode.symbol.id);
+          }
         }}
         onNodeContextMenu={(event, node) => {
           event.preventDefault();
@@ -2047,9 +2084,25 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
   const node = data.graphNode;
   const handles = handlePositions(data.layout);
   if (!("symbol" in node)) {
+    const isReveal = node.markerKind === "reveal" && node.revealDirection;
     return (
-      <div className={`callNode boundaryNode${node.markerKind === "limit" ? " limitBoundary" : ""}`}>
+      <div
+        className={`callNode boundaryNode${node.markerKind === "limit" ? " limitBoundary" : ""}${isReveal ? " revealBoundary" : ""}`}
+        role={isReveal ? "button" : undefined}
+        tabIndex={isReveal ? 0 : undefined}
+        title={isReveal ? "Reveal one more graph level from this branch" : node.detail}
+        onClick={isReveal ? () => data.onRevealMore?.(node.revealDirection!, node.ownerId) : undefined}
+        onKeyDown={isReveal
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                data.onRevealMore?.(node.revealDirection!, node.ownerId);
+              }
+            }
+          : undefined}
+      >
         <Handle type="target" position={handles.target} />
+        <Handle type="source" position={handles.source} />
         <strong>{node.label}</strong>
         <span>{node.detail}</span>
       </div>
@@ -2098,7 +2151,9 @@ function layoutFlowGraph(
       ? { width: 278, height: 142 }
       : node.markerKind === "limit"
         ? { width: 168, height: 62 }
-        : { width: 160, height: 72 };
+        : node.markerKind === "reveal"
+          ? { width: 152, height: 58 }
+          : { width: 160, height: 72 };
     sizeById.set(node.id, size);
     graph.setNode(node.id, size);
   }
@@ -2122,7 +2177,7 @@ function layoutFlowGraph(
       measured: size,
       data: {
         graphNode,
-        color: symbol ? groupColor(symbol, report) : markerKind === "limit" ? "#d97706" : "#64748b",
+        color: symbol ? groupColor(symbol, report) : markerKind === "limit" ? "#d97706" : markerKind === "reveal" ? "#0f766e" : "#64748b",
         layout,
         selected: symbol?.id === selectedId,
         dimmed: false,
@@ -2181,6 +2236,45 @@ function worstPathGraphSlice(
   };
 }
 
+function revealFitNodeIds(
+  graphEdges: ReturnType<typeof buildFocusedCallGraph>["edges"],
+  ownerId: number,
+): Array<string> {
+  const ownerNodeId = symbolNodeId(ownerId);
+  const firstHop = new Set<string>([ownerNodeId]);
+  for (const edge of graphEdges) {
+    if (edge.source === ownerNodeId) firstHop.add(edge.target);
+    if (edge.target === ownerNodeId) firstHop.add(edge.source);
+  }
+
+  const fitNodes = new Set(firstHop);
+  for (const edge of graphEdges) {
+    if (firstHop.has(edge.source)) fitNodes.add(edge.target);
+    if (firstHop.has(edge.target)) fitNodes.add(edge.source);
+  }
+  return [...fitNodes];
+}
+
+function rootIntroFitNodeIds(
+  graphEdges: ReturnType<typeof buildFocusedCallGraph>["edges"],
+  rootId: number,
+): Array<string> {
+  const rootNodeId = symbolNodeId(rootId);
+  const fitNodes = new Set<string>([rootNodeId]);
+  let frontier = new Set<string>([rootNodeId]);
+  for (let depth = 0; depth < 3; depth += 1) {
+    const next = new Set<string>();
+    for (const edge of graphEdges) {
+      if (!frontier.has(edge.source)) continue;
+      next.add(edge.target);
+      fitNodes.add(edge.target);
+    }
+    frontier = next;
+    if (frontier.size === 0) break;
+  }
+  return [...fitNodes];
+}
+
 function shortSymbolName(name: string): string {
   const parts = name.split("::").filter(Boolean);
   if (parts.length <= 2) return name;
@@ -2209,6 +2303,7 @@ function handlePositions(layout: GraphLayout): { target: Position; source: Posit
 
 function graphEdgeLabel(edge: ReturnType<typeof buildFocusedCallGraph>["edges"][number]): string {
   if (edge.kind === "limit") return "limit";
+  if (edge.kind === "reveal") return "more";
   const delta = edge.addedStackBytes == null ? null : `+${formatBytes(edge.addedStackBytes)}`;
   if (edge.kind === "tail_call") return delta ? `${delta} tail` : "tail";
   if (edge.kind === "direct_call") return delta ?? "unmeasured";
