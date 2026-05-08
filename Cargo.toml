@@ -6,6 +6,7 @@ members = [
 exclude = [
     "fixtures/simple-std",
     "fixtures/no-std-lib",
+    "fixtures/complex-tree",
 ]
 resolver = "2"
 

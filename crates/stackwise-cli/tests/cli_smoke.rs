@@ -1,5 +1,6 @@
 use assert_cmd::Command;
 use camino::Utf8PathBuf;
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::process::{Command as StdCommand, Stdio};
 use std::time::{Duration, Instant};
@@ -130,23 +131,155 @@ fn analyze_artifact_serve_prints_local_url() {
     assert!(report_path.exists());
 }
 
+#[test]
+fn complex_tree_fixture_extracts_large_direct_call_graph() {
+    let Some(fixture) = fixture_root("complex-tree") else {
+        eprintln!("skipping complex tree fixture test because fixtures are not packaged");
+        return;
+    };
+    let build_status = StdCommand::new("cargo")
+        .arg("build")
+        .arg("--release")
+        .current_dir(&fixture)
+        .status()
+        .unwrap();
+    assert!(build_status.success(), "complex tree fixture should build");
+    let artifact = release_artifact(&fixture, "stackwise-complex-tree");
+    assert!(artifact.exists(), "complex tree artifact should exist");
+
+    let temp = tempfile::tempdir().unwrap();
+    let report_path = Utf8PathBuf::from_path_buf(temp.path().join("complex-tree.json")).unwrap();
+    let mut command = Command::cargo_bin("stackwise").unwrap();
+    command
+        .arg("analyze")
+        .arg(&artifact)
+        .arg("--json")
+        .arg(&report_path);
+    command.assert().success();
+
+    let report: stackwise_core::StackwiseReport =
+        serde_json::from_slice(&std::fs::read(report_path).unwrap()).unwrap();
+    let by_id = report
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.id, symbol.demangled.as_str()))
+        .collect::<HashMap<_, _>>();
+    let generated = report
+        .symbols
+        .iter()
+        .filter(|symbol| {
+            symbol
+                .demangled
+                .contains("stackwise_complex_tree::generated::")
+        })
+        .collect::<Vec<_>>();
+    let generated_measured = generated
+        .iter()
+        .filter(|symbol| symbol.own_frame.status == stackwise_core::FrameStatus::Known)
+        .count();
+    let generated_direct_edges = report
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.kind == stackwise_core::EdgeKind::DirectCall
+                && by_id
+                    .get(&edge.caller)
+                    .is_some_and(|name| name.contains("::generated::"))
+                && edge.callee.is_some_and(|callee| {
+                    by_id
+                        .get(&callee)
+                        .is_some_and(|name| name.contains("::generated::"))
+                })
+        })
+        .count();
+
+    assert!(report
+        .symbols
+        .iter()
+        .any(|symbol| symbol.demangled == "stackwise_complex_tree::main"));
+    assert!(report
+        .symbols
+        .iter()
+        .any(|symbol| symbol.demangled == "stackwise_complex_tree::generated::tree_root"));
+    assert!(report
+        .symbols
+        .iter()
+        .any(|symbol| symbol.demangled == "stackwise_complex_tree::generated::node_0_0"));
+    assert!(report
+        .symbols
+        .iter()
+        .any(|symbol| symbol.demangled == "stackwise_complex_tree::generated::node_5_1023"));
+    assert!(
+        generated.len() >= 1366,
+        "expected the generated tree to retain at least 1366 symbols, got {}",
+        generated.len()
+    );
+    assert!(
+        generated_measured >= 1366,
+        "expected every generated tree symbol to have measured frame evidence, got {generated_measured}"
+    );
+    assert!(
+        generated_direct_edges >= 1360,
+        "expected direct generated call edges from the emitted tree, got {generated_direct_edges}"
+    );
+    assert!(has_named_edge(
+        &report,
+        &by_id,
+        "stackwise_complex_tree::generated::tree_root",
+        "stackwise_complex_tree::generated::node_0_0",
+    ));
+    assert!(has_named_edge(
+        &report,
+        &by_id,
+        "stackwise_complex_tree::generated::node_0_0",
+        "stackwise_complex_tree::generated::node_1_0",
+    ));
+    assert!(has_named_edge(
+        &report,
+        &by_id,
+        "stackwise_complex_tree::generated::node_4_255",
+        "stackwise_complex_tree::generated::node_5_1023",
+    ));
+}
+
 fn simple_std_artifact() -> Option<Utf8PathBuf> {
+    let fixture = fixture_root("simple-std")?;
+    let artifact = release_artifact(&fixture, "stackwise-simple-std");
+    artifact.exists().then_some(artifact)
+}
+
+fn fixture_root(name: &str) -> Option<Utf8PathBuf> {
     let manifest_dir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest_dir
         .parent()
         .and_then(|path| path.parent())?
         .to_path_buf();
-    let fixture = workspace_root.join("fixtures").join("simple-std");
-    let artifact = if cfg!(windows) {
+    let fixture = workspace_root.join("fixtures").join(name);
+    fixture.join("Cargo.toml").exists().then_some(fixture)
+}
+
+fn release_artifact(fixture: &Utf8PathBuf, name: &str) -> Utf8PathBuf {
+    if cfg!(windows) {
         fixture
             .join("target")
             .join("release")
-            .join("stackwise-simple-std.exe")
+            .join(format!("{name}.exe"))
     } else {
-        fixture
-            .join("target")
-            .join("release")
-            .join("stackwise-simple-std")
-    };
-    artifact.exists().then_some(artifact)
+        fixture.join("target").join("release").join(name)
+    }
+}
+
+fn has_named_edge(
+    report: &stackwise_core::StackwiseReport,
+    by_id: &HashMap<u32, &str>,
+    caller: &str,
+    callee: &str,
+) -> bool {
+    report.edges.iter().any(|edge| {
+        edge.kind == stackwise_core::EdgeKind::DirectCall
+            && by_id.get(&edge.caller).copied() == Some(caller)
+            && edge
+                .callee
+                .is_some_and(|callee_id| by_id.get(&callee_id).copied() == Some(callee))
+    })
 }

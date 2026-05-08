@@ -116,6 +116,8 @@ const defaultGraphNavigationState: GraphNavigationState = {
   actionSymbolId: null,
   highlightBranchRootId: null,
 };
+const callGraphCallerDepthOptions = [0, 1, 2, 3];
+const callGraphCalleeDepthOptions = Array.from({ length: 13 }, (_, index) => index);
 
 const graphLayoutOptions: Array<{ value: GraphLayout; label: string }> = [
   { value: "TB", label: "Top down" },
@@ -538,13 +540,13 @@ function GraphControls({
         <label>
           Callers
           <select value={callerDepth} onChange={(event) => setCallerDepth(Number(event.target.value))}>
-            {[0, 1, 2, 3].map((value) => <option key={value} value={value}>{value}</option>)}
+            {callGraphCallerDepthOptions.map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
         </label>
         <label>
           Callees
           <select value={calleeDepth} onChange={(event) => setCalleeDepth(Number(event.target.value))}>
-            {[0, 1, 2, 3, 4, 5, 6].map((value) => <option key={value} value={value}>{value}</option>)}
+            {callGraphCalleeDepthOptions.map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
         </label>
         <label className="nodeLimitControl">
