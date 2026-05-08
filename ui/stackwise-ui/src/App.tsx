@@ -2120,7 +2120,7 @@ function CallGraphView({
                   setContextMenu(null);
                 }}
               >
-                <RotateCcw size={14} /> Set as root
+                <Pin size={14} /> Set as root
               </button>
               <button
                 type="button"
