@@ -1755,10 +1755,17 @@ function TreemapCanvas({
       }
 
       for (const rect of rects) {
-        if (rect.width > 90 && rect.height > 28) {
+        if (rect.width > 90 && rect.height > 34) {
+          const labelInset = 15 * ratio;
+          const labelBaseline = 24 * ratio;
+          const labelWidth = Math.max(0, rect.width - labelInset * 2);
           context.fillStyle = readableText(groupColor(rect.symbol, report));
           context.font = `${12 * ratio}px system-ui`;
-          context.fillText(trim(rect.symbol.demangled, Math.floor(rect.width / (7 * ratio))), rect.x + 6, rect.y + 16 * ratio);
+          context.fillText(
+            trim(rect.symbol.demangled, Math.floor(labelWidth / (7 * ratio))),
+            rect.x + labelInset,
+            rect.y + labelBaseline,
+          );
         }
       }
     };
