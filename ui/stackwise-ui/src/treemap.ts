@@ -10,6 +10,14 @@ export interface TreemapRect {
   height: number;
 }
 
+export interface TreemapHitIndex {
+  width: number;
+  height: number;
+  columns: number;
+  rows: number;
+  buckets: TreemapRect[][];
+}
+
 interface TreeNode {
   name: string;
   symbol?: SymbolReport;
@@ -32,12 +40,9 @@ export function buildTreemap(
 
     const groupName = treemapGroupName(symbol, report);
     const group = groups.get(groupName) ?? { name: groupName, children: [], priority: groupPriority(symbol, report) };
-    group.value = (group.value ?? 0) + value;
     group.children?.push({ name: symbol.demangled, symbol, value });
     groups.set(groupName, group);
   }
-
-  applyPrimaryGroupFloor([...groups.values()]);
 
   const children = [...groups.values()];
   if (children.length === 0) return [];
@@ -72,23 +77,36 @@ export function buildTreemap(
     }));
 }
 
-function applyPrimaryGroupFloor(groups: TreeNode[]) {
-  const total = groups.reduce((sum, group) => sum + (group.value ?? 0), 0);
-  if (total <= 0) {
-    for (const group of groups) group.value = undefined;
-    return;
-  }
-  const primaryGroups = groups.filter((group) => group.priority === 0);
+export function buildTreemapHitIndex(rects: TreemapRect[], width: number, height: number): TreemapHitIndex {
+  const columns = Math.max(1, Math.min(96, Math.ceil(Math.sqrt(Math.max(1, rects.length)))));
+  const rows = Math.max(1, Math.min(96, Math.ceil(columns * (height / Math.max(1, width)))));
+  const buckets = Array.from({ length: columns * rows }, () => [] as TreemapRect[]);
 
-  const floor = total * (primaryGroups.length > 6 ? 0.025 : 0.08);
-  for (const group of primaryGroups) {
-    if ((group.value ?? 0) < floor && group.children?.length) {
-      const scale = floor / Math.max(group.value ?? 0, 1);
-      group.children = group.children.map((child) => ({
-        ...child,
-        value: (child.value ?? 0) * scale,
-      }));
+  for (const rect of rects) {
+    const minColumn = clampIndex(Math.floor((rect.x / Math.max(1, width)) * columns), columns);
+    const maxColumn = clampIndex(Math.floor(((rect.x + rect.width) / Math.max(1, width)) * columns), columns);
+    const minRow = clampIndex(Math.floor((rect.y / Math.max(1, height)) * rows), rows);
+    const maxRow = clampIndex(Math.floor(((rect.y + rect.height) / Math.max(1, height)) * rows), rows);
+
+    for (let row = minRow; row <= maxRow; row += 1) {
+      for (let column = minColumn; column <= maxColumn; column += 1) {
+        buckets[row * columns + column].push(rect);
+      }
     }
   }
-  for (const group of groups) group.value = undefined;
+
+  return { width, height, columns, rows, buckets };
+}
+
+export function hitTestTreemap(index: TreemapHitIndex, x: number, y: number): TreemapRect | null {
+  if (x < 0 || y < 0 || x > index.width || y > index.height) return null;
+
+  const column = clampIndex(Math.floor((x / Math.max(1, index.width)) * index.columns), index.columns);
+  const row = clampIndex(Math.floor((y / Math.max(1, index.height)) * index.rows), index.rows);
+  const bucket = index.buckets[row * index.columns + column] ?? [];
+  return bucket.find((rect) => x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height) ?? null;
+}
+
+function clampIndex(value: number, size: number): number {
+  return Math.max(0, Math.min(size - 1, value));
 }

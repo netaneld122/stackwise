@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildFocusedCallGraph, chooseDefaultRoot, DEFAULT_CALL_GRAPH_NODE_LIMIT } from "./callGraph";
+import {
+  buildFocusedCallGraph,
+  chooseDefaultRoot,
+  countReachableCallGraphSymbols,
+  DEFAULT_CALL_GRAPH_NODE_LIMIT,
+} from "./callGraph";
 import type { GraphSymbolNode } from "./callGraph";
 import type { EdgeKind, EdgeReport, StackwiseReport, SymbolReport } from "./report";
 
@@ -310,6 +315,35 @@ describe("call graph helpers", () => {
     const marker = graph.nodes.find((node) => node.id === "limit:caller:1");
     expect(marker && "label" in marker ? marker.label : null).toBe("Reveal more");
     expect(marker && "detail" in marker ? marker.detail : null).toBe("+2 callers");
+  });
+
+  it("counts reachable symbols without building the full visual graph", () => {
+    const symbols = Array.from({ length: 6000 }, (_, id) => symbol(id, id === 0 ? "demo::main" : `demo::f${id}`, 8));
+    const report = reportWith(symbols, symbols.slice(1).map((target) => edge(0, target.id, "direct_call")));
+
+    const reachability = countReachableCallGraphSymbols(report, symbols, {
+      rootId: 0,
+      edgeKinds: allEdges,
+    });
+
+    expect(reachability.rootId).toBe(0);
+    expect(reachability.reachableNodeCount).toBe(symbols.length);
+  });
+
+  it("prunes long chains without recursive hidden-count overflow", () => {
+    const symbols = Array.from({ length: 6000 }, (_, id) => symbol(id, id === 0 ? "demo::main" : `demo::f${id}`, 8));
+    const report = reportWith(symbols, symbols.slice(0, -1).map((source) => edge(source.id, source.id + 1, "direct_call")));
+
+    const graph = buildFocusedCallGraph(report, symbols, {
+      rootId: 0,
+      maxNodes: 480,
+      edgeKinds: allEdges,
+    });
+
+    expect(graph.reachableNodeCount).toBe(symbols.length);
+    expect(graph.hiddenNodeCount).toBe(symbols.length - 480);
+    expect(graph.nodes.map((node) => node.id)).toContain("s:479");
+    expect(graph.nodes.map((node) => node.id)).toContain("limit:callee:479");
   });
 });
 

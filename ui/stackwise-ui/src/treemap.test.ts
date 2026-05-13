@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTreemap } from "./treemap";
+import { buildTreemap, buildTreemapHitIndex, hitTestTreemap } from "./treemap";
 import type { StackwiseReport, SymbolReport } from "./report";
 
 describe("treemap builder", () => {
@@ -9,15 +9,60 @@ describe("treemap builder", () => {
     expect(buildTreemap(report.symbols, "own", 400, 300, report)).toEqual([]);
     expect(buildTreemap(report.symbols, "worst", 400, 300, report)).toEqual([]);
   });
+
+  it("keeps frame areas on the same scale across modules and crates", () => {
+    const report = reportWith([
+      symbol(1, "demo::ui::tiny_frame", 10, { modulePath: ["demo", "ui"] }),
+      symbol(2, "demo::engine::small_frame", 40, { modulePath: ["demo", "engine"] }),
+      symbol(3, "std::thread::large_frame", 950, { crateName: "std", modulePath: ["std", "thread"] }),
+      symbol(4, "serde::de::medium_frame", 500, { crateName: "serde", modulePath: ["serde", "de"] }),
+    ]);
+
+    const rects = buildTreemap(report.symbols, "own", 2000, 1200, report);
+    const totalArea = rects.reduce((sum, rect) => sum + rect.width * rect.height, 0);
+    const totalFrameBytes = report.symbols.reduce((sum, item) => sum + (item.own_frame.bytes ?? 0), 0);
+
+    expect(rects).toHaveLength(report.symbols.length);
+    for (const rect of rects) {
+      const areaShare = (rect.width * rect.height) / totalArea;
+      const frameShare = (rect.symbol.own_frame.bytes ?? 0) / totalFrameBytes;
+
+      expect(areaShare).toBeCloseTo(frameShare, 2);
+    }
+  });
+
+  it("hit-tests treemap rectangles through a spatial index", () => {
+    const report = reportWith(
+      Array.from({ length: 800 }, (_, index) =>
+        symbol(index, `demo::module${index % 20}::frame${index}`, 8 + (index % 64), {
+          modulePath: ["demo", `module${index % 20}`],
+        }),
+      ),
+    );
+
+    const rects = buildTreemap(report.symbols, "own", 1600, 1000, report);
+    const index = buildTreemapHitIndex(rects, 1600, 1000);
+
+    expect(rects.length).toBeGreaterThan(100);
+    for (const rect of rects.slice(0, 100)) {
+      expect(hitTestTreemap(index, rect.x + rect.width / 2, rect.y + rect.height / 2)).toBe(rect);
+    }
+    expect(hitTestTreemap(index, -1, -1)).toBeNull();
+  });
 });
 
-function symbol(id: number, demangled: string, own: number | null): SymbolReport {
+interface SymbolOptions {
+  crateName?: string;
+  modulePath?: string[];
+}
+
+function symbol(id: number, demangled: string, own: number | null, options: SymbolOptions = {}): SymbolReport {
   return {
     id,
     name: demangled,
     demangled,
-    crate_name: "demo",
-    module_path: ["demo"],
+    crate_name: options.crateName ?? "demo",
+    module_path: options.modulePath ?? ["demo"],
     address: id * 16,
     size_bytes: 12,
     own_frame: {

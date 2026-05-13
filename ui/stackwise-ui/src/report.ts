@@ -191,7 +191,11 @@ const CRATE_COLORS = [
   "#4f46e5",
 ];
 
+const primaryCrateCache = new WeakMap<StackwiseReport, string | null>();
+
 export function primaryCrateName(report: StackwiseReport): string | null {
+  if (primaryCrateCache.has(report)) return primaryCrateCache.get(report) ?? null;
+
   const symbolCrates = new Set(
     report.symbols
       .map((symbol) => normalizeCrate(symbol.crate_name))
@@ -205,11 +209,16 @@ export function primaryCrateName(report: StackwiseReport): string | null {
 
   for (const candidate of candidates) {
     const normalized = normalizeCrate(candidate);
-    if (normalized && symbolCrates.has(normalized)) return normalized;
+    if (normalized && symbolCrates.has(normalized)) {
+      primaryCrateCache.set(report, normalized);
+      return normalized;
+    }
   }
 
   const ownCandidate = [...symbolCrates].find((crate) => !isRuntimeCrate(crate) && !isSyntheticCrate(crate));
-  return ownCandidate ?? null;
+  const result = ownCandidate ?? null;
+  primaryCrateCache.set(report, result);
+  return result;
 }
 
 export function treemapGroupName(symbol: SymbolReport, report: StackwiseReport): string {

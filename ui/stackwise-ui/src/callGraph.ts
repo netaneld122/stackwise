@@ -64,6 +64,12 @@ export interface FocusedCallGraph {
   reachableNodeCount: number;
 }
 
+export interface GraphReachabilityOptions {
+  rootId: number | null;
+  edgeKinds: ReadonlySet<EdgeKind>;
+  direction?: GraphDirection;
+}
+
 interface GraphIndex {
   byId: Map<number, SymbolReport>;
   incoming: Map<number, EdgeReport[]>;
@@ -104,11 +110,35 @@ export function chooseDefaultRoot(
   });
   if (main) return main.id;
 
-  return visibleSymbols
-    .filter((symbol) => symbol.own_frame.bytes != null)
-    .sort((left, right) => (right.own_frame.bytes ?? 0) - (left.own_frame.bytes ?? 0))[0]?.id
-    ?? visibleSymbols[0]?.id
-    ?? null;
+  let heaviest: SymbolReport | null = null;
+  for (const symbol of visibleSymbols) {
+    if (symbol.own_frame.bytes == null) continue;
+    if ((symbol.own_frame.bytes ?? 0) > (heaviest?.own_frame.bytes ?? 0)) heaviest = symbol;
+  }
+
+  return heaviest?.id ?? visibleSymbols[0]?.id ?? null;
+}
+
+export function countReachableCallGraphSymbols(
+  report: StackwiseReport,
+  visibleSymbols: SymbolReport[],
+  options: GraphReachabilityOptions,
+): { rootId: number | null; reachableNodeCount: number } {
+  const allSymbolsById = new Map(report.symbols.map((symbol) => [symbol.id, symbol]));
+  const visibleIds = new Set(visibleSymbols.map((symbol) => symbol.id));
+  const rootId = options.rootId != null && allSymbolsById.has(options.rootId)
+    ? options.rootId
+    : chooseDefaultRoot(report, visibleSymbols, null);
+  if (rootId == null) return { rootId: null, reachableNodeCount: 0 };
+
+  visibleIds.add(rootId);
+  const index = buildGraphIndex(report, visibleIds, allSymbolsById);
+  let reachableNodeCount = 1;
+  walkReachable(rootId, options.direction ?? "callees", index, options.edgeKinds, () => {
+    reachableNodeCount += 1;
+    return true;
+  });
+  return { rootId, reachableNodeCount };
 }
 
 export function buildFocusedCallGraph(
@@ -244,14 +274,10 @@ function pruneReachableGraph(
   revealOwnerIds: ReadonlySet<number>,
 ): PrunedGraph {
   const nodeLimit = Math.max(1, Math.floor(maxNodes));
-  const nodeIds = new Set(reachableNodeIds);
   const protectedIds = collectRevealProtectedIds(rootId, reachableNodeIds, index, edgeKinds, direction, revealOwnerIds);
-  while (nodeIds.size > nodeLimit) {
-    const candidate = choosePruneCandidate(rootId, nodeIds, depthById, index, edgeKinds, protectedIds);
-    if (candidate == null) break;
-    nodeIds.delete(candidate);
-    keepRootConnected(rootId, nodeIds, index, edgeKinds);
-  }
+  const nodeIds = reachableNodeIds.size > nodeLimit
+    ? selectRetainedNodeIds(rootId, reachableNodeIds, depthById, index, edgeKinds, direction, protectedIds, nodeLimit)
+    : new Set(reachableNodeIds);
 
   return {
     nodeIds,
@@ -260,29 +286,65 @@ function pruneReachableGraph(
   };
 }
 
-function choosePruneCandidate(
+function selectRetainedNodeIds(
   rootId: number,
-  nodeIds: ReadonlySet<number>,
+  reachableNodeIds: ReadonlySet<number>,
   depthById: ReadonlyMap<number, number>,
   index: GraphIndex,
   edgeKinds: ReadonlySet<EdgeKind>,
+  direction: GraphDirection,
   protectedIds: ReadonlySet<number>,
-): number | null {
-  const candidates = [...nodeIds]
-    .filter((id) => id !== rootId)
-    .sort((left, right) => (depthById.get(right) ?? 0) - (depthById.get(left) ?? 0) || right - left);
-  if (!candidates.length) return null;
+  nodeLimit: number,
+): Set<number> {
+  const retained = new Set<number>([rootId]);
+  const seen = new Set<number>([rootId]);
+  const queue = [rootId];
 
-  const preferredCandidates = candidates.some((id) => !protectedIds.has(id))
-    ? candidates.filter((id) => !protectedIds.has(id))
-    : candidates;
+  for (let head = 0; head < queue.length && retained.size < nodeLimit; head += 1) {
+    const current = queue[head];
+    const nextIds = traversalNextIds(current, direction, index, edgeKinds)
+      .filter((id) => reachableNodeIds.has(id) && !seen.has(id))
+      .sort((left, right) =>
+        Number(protectedIds.has(right)) - Number(protectedIds.has(left)) ||
+        (depthById.get(left) ?? 0) - (depthById.get(right) ?? 0) ||
+        left - right,
+      );
 
-  const leaf = preferredCandidates.find((id) => graphNeighborCount(id, nodeIds, index, edgeKinds) <= 1);
-  if (leaf != null) return leaf;
+    for (const nextId of nextIds) {
+      seen.add(nextId);
+      if (retained.size >= nodeLimit) break;
+      retained.add(nextId);
+      queue.push(nextId);
+    }
+  }
 
-  return preferredCandidates.find((id) => keepsRootConnectedAfterRemoving(rootId, id, nodeIds, index, edgeKinds))
-    ?? preferredCandidates[0]
-    ?? null;
+  if (retained.size < nodeLimit) {
+    const fallbackIds = [...reachableNodeIds]
+      .filter((id) => !retained.has(id))
+      .sort((left, right) => (depthById.get(left) ?? 0) - (depthById.get(right) ?? 0) || left - right);
+    for (const id of fallbackIds) {
+      retained.add(id);
+      if (retained.size >= nodeLimit) break;
+    }
+  }
+
+  return retained;
+}
+
+function traversalNextIds(
+  id: number,
+  direction: GraphDirection,
+  index: GraphIndex,
+  edgeKinds: ReadonlySet<EdgeKind>,
+): number[] {
+  const nextIds: number[] = [];
+  const edges = direction === "callers" ? index.incoming.get(id) ?? [] : index.outgoing.get(id) ?? [];
+  for (const edge of edges) {
+    if (!edgeKinds.has(edge.kind)) continue;
+    const nextId = direction === "callers" ? edge.caller : edge.callee;
+    if (nextId != null) nextIds.push(nextId);
+  }
+  return nextIds;
 }
 
 function collectRevealProtectedIds(
@@ -296,10 +358,11 @@ function collectRevealProtectedIds(
   const protectedIds = new Set<number>();
   for (const ownerId of revealOwnerIds) {
     if (!reachableNodeIds.has(ownerId)) continue;
+    protectedIds.add(ownerId);
     const queue = [ownerId];
     const seen = new Set<number>(queue);
-    while (queue.length) {
-      const current = queue.shift()!;
+    for (let head = 0; head < queue.length; head += 1) {
+      const current = queue[head];
       for (const edge of direction === "callers" ? index.incoming.get(current) ?? [] : index.outgoing.get(current) ?? []) {
         if (!edgeKinds.has(edge.kind)) continue;
         const next = direction === "callers" ? edge.caller : edge.callee;
@@ -312,76 +375,6 @@ function collectRevealProtectedIds(
   }
   protectedIds.delete(rootId);
   return protectedIds;
-}
-
-function graphNeighborCount(
-  id: number,
-  nodeIds: ReadonlySet<number>,
-  index: GraphIndex,
-  edgeKinds: ReadonlySet<EdgeKind>,
-): number {
-  return graphNeighbors(id, nodeIds, index, edgeKinds).size;
-}
-
-function graphNeighbors(
-  id: number,
-  nodeIds: ReadonlySet<number>,
-  index: GraphIndex,
-  edgeKinds: ReadonlySet<EdgeKind>,
-): Set<number> {
-  const neighbors = new Set<number>();
-  for (const edge of index.outgoing.get(id) ?? []) {
-    if (edge.callee != null && edgeKinds.has(edge.kind) && nodeIds.has(edge.callee)) neighbors.add(edge.callee);
-  }
-  for (const edge of index.incoming.get(id) ?? []) {
-    if (edgeKinds.has(edge.kind) && nodeIds.has(edge.caller)) neighbors.add(edge.caller);
-  }
-  return neighbors;
-}
-
-function keepsRootConnectedAfterRemoving(
-  rootId: number,
-  removingId: number,
-  nodeIds: ReadonlySet<number>,
-  index: GraphIndex,
-  edgeKinds: ReadonlySet<EdgeKind>,
-): boolean {
-  const next = new Set(nodeIds);
-  next.delete(removingId);
-  return connectedFromRoot(rootId, next, index, edgeKinds).size === next.size;
-}
-
-function keepRootConnected(
-  rootId: number,
-  nodeIds: Set<number>,
-  index: GraphIndex,
-  edgeKinds: ReadonlySet<EdgeKind>,
-) {
-  const connected = connectedFromRoot(rootId, nodeIds, index, edgeKinds);
-  for (const id of nodeIds) {
-    if (!connected.has(id)) nodeIds.delete(id);
-  }
-}
-
-function connectedFromRoot(
-  rootId: number,
-  nodeIds: ReadonlySet<number>,
-  index: GraphIndex,
-  edgeKinds: ReadonlySet<EdgeKind>,
-): Set<number> {
-  const connected = new Set<number>();
-  if (!nodeIds.has(rootId)) return connected;
-  const queue = [rootId];
-  connected.add(rootId);
-  while (queue.length) {
-    const id = queue.shift()!;
-    for (const neighbor of graphNeighbors(id, nodeIds, index, edgeKinds)) {
-      if (connected.has(neighbor)) continue;
-      connected.add(neighbor);
-      queue.push(neighbor);
-    }
-  }
-  return connected;
 }
 
 function hiddenCounts(
@@ -419,19 +412,17 @@ function collectHidden(
   direction: GraphDirection,
   collected: Set<number>,
 ) {
-  if (!hidden.has(id) || collected.has(id)) return;
-  collected.add(id);
-  if (direction === "callers") {
-    for (const edge of index.incoming.get(id) ?? []) {
-      if (edgeKinds.has(edge.kind)) {
-        collectHidden(edge.caller, hidden, index, edgeKinds, direction, collected);
-      }
-    }
-  } else {
-    for (const edge of index.outgoing.get(id) ?? []) {
-      if (edge.callee != null && edgeKinds.has(edge.kind)) {
-        collectHidden(edge.callee, hidden, index, edgeKinds, direction, collected);
-      }
+  const queue = [id];
+  for (let head = 0; head < queue.length; head += 1) {
+    const current = queue[head];
+    if (!hidden.has(current) || collected.has(current)) continue;
+    collected.add(current);
+
+    const edges = direction === "callers" ? index.incoming.get(current) ?? [] : index.outgoing.get(current) ?? [];
+    for (const edge of edges) {
+      if (!edgeKinds.has(edge.kind)) continue;
+      const next = direction === "callers" ? edge.caller : edge.callee;
+      if (next != null && hidden.has(next) && !collected.has(next)) queue.push(next);
     }
   }
 }
@@ -469,13 +460,19 @@ function buildGraphIndex(
 
   for (const edge of report.edges) {
     if (!visibleIds.has(edge.caller)) continue;
-    outgoing.set(edge.caller, [...(outgoing.get(edge.caller) ?? []), edge]);
+    appendMapArray(outgoing, edge.caller, edge);
     if (edge.callee != null && visibleIds.has(edge.callee)) {
-      incoming.set(edge.callee, [...(incoming.get(edge.callee) ?? []), edge]);
+      appendMapArray(incoming, edge.callee, edge);
     }
   }
 
   return { byId, incoming, outgoing, visibleIds };
+}
+
+function appendMapArray<K, V>(map: Map<K, V[]>, key: K, value: V) {
+  const existing = map.get(key);
+  if (existing) existing.push(value);
+  else map.set(key, [value]);
 }
 
 function walkReachable(
@@ -487,8 +484,8 @@ function walkReachable(
 ) {
   const queue = [{ id: rootId, depth: 0 }];
   const seen = new Set<number>([rootId]);
-  while (queue.length) {
-    const current = queue.shift()!;
+  for (let head = 0; head < queue.length; head += 1) {
+    const current = queue[head];
     const edges = direction === "callers" ? index.incoming.get(current.id) ?? [] : index.outgoing.get(current.id) ?? [];
     for (const edge of edges) {
       if (!edgeKinds.has(edge.kind)) continue;
@@ -583,7 +580,7 @@ function computeVisibleWorstStacks(
     const caller = symbolIdFromNodeId(edge.source);
     const callee = symbolIdFromNodeId(edge.target);
     if (caller == null || callee == null || !nodeIds.has(caller) || !nodeIds.has(callee)) continue;
-    outgoing.set(caller, [...(outgoing.get(caller) ?? []), { callee, kind: edge.kind }]);
+    appendMapArray(outgoing, caller, { callee, kind: edge.kind });
   }
 
   const memo = new Map<number, { bytes: number | null; status: GraphStackStatus; path: number[] }>();

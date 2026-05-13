@@ -53,6 +53,7 @@ import { siClaude, siCursor } from "simple-icons";
 import {
   buildFocusedCallGraph,
   chooseDefaultRoot,
+  countReachableCallGraphSymbols,
   DEFAULT_CALL_GRAPH_NODE_LIMIT,
   symbolNodeId,
   type GraphDirection,
@@ -86,7 +87,7 @@ import {
   type ViewMode,
 } from "./report";
 import { useStackwiseStore } from "./store";
-import { buildTreemap, type TreemapRect } from "./treemap";
+import { buildTreemap, buildTreemapHitIndex, hitTestTreemap, type TreemapHitIndex, type TreemapRect } from "./treemap";
 
 type GraphLayout = "TB" | "LR" | "RL" | "BT";
 type GraphNavigationMode = "default" | "focus" | "callers";
@@ -245,20 +246,18 @@ function ReportView({ report }: { report: StackwiseReport }) {
     (symbol) => symbol.id === graphFocusSymbolId,
   ) ?? null;
   const graphDirection: GraphDirection = effectiveGraphMode === "callers" ? "callers" : "callees";
-  const graphLimitStats = useMemo(
+  const graphReachability = useMemo(
     () => {
       if (viewMode !== "call_graph") return null;
-      return buildFocusedCallGraph(report, symbols, {
+      return countReachableCallGraphSymbols(report, symbols, {
         rootId: effectiveGraphRoot,
-        maxNodes: Number.MAX_SAFE_INTEGER,
         edgeKinds,
         direction: graphDirection,
-        revealOwnerIds,
       });
     },
-    [edgeKinds, effectiveGraphRoot, graphDirection, report, revealOwnerIds, symbols, viewMode],
+    [edgeKinds, effectiveGraphRoot, graphDirection, report, symbols, viewMode],
   );
-  const graphNodeLimitMax = Math.max(1, graphLimitStats?.reachableNodeCount ?? nodeLimit);
+  const graphNodeLimitMax = Math.max(1, graphReachability?.reachableNodeCount ?? nodeLimit);
   const effectiveNodeLimit = clamp(nodeLimit, 1, graphNodeLimitMax);
 
   useEffect(() => {
@@ -1712,6 +1711,8 @@ function TreemapCanvas({
   const ref = useRef<HTMLCanvasElement>(null);
   const { setSelectedId } = useStackwiseStore();
   const rectsRef = useRef<TreemapRect[]>([]);
+  const hitIndexRef = useRef<TreemapHitIndex | null>(null);
+  const selectedIdRef = useRef(selectedId);
   const [hovered, setHovered] = useState<{ symbol: SymbolReport; x: number; y: number } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; symbol: SymbolReport } | null>(null);
   const [hasRects, setHasRects] = useState(true);
@@ -1723,9 +1724,9 @@ function TreemapCanvas({
     const ratio = window.devicePixelRatio || 1;
     const x = (event.clientX - bounds.left) * ratio;
     const y = (event.clientY - bounds.top) * ratio;
-    return rectsRef.current.find(
-      (item) => x >= item.x && x <= item.x + item.width && y >= item.y && y <= item.y + item.height,
-    ) ?? null;
+    const index = hitIndexRef.current;
+    if (index) return hitTestTreemap(index, x, y);
+    return null;
   };
 
   useEffect(() => {
@@ -1743,62 +1744,39 @@ function TreemapCanvas({
       context.clearRect(0, 0, canvas.width, canvas.height);
       const rects = buildTreemap(symbols, metric, canvas.width, canvas.height, report);
       rectsRef.current = rects;
+      hitIndexRef.current = buildTreemapHitIndex(rects, canvas.width, canvas.height);
       const nextHasRects = rects.length > 0;
       setHasRects((current) => (current === nextHasRects ? current : nextHasRects));
-
-      let selectedRect: TreemapRect | null = null;
-      for (const rect of rects) {
-        const fill = groupColor(rect.symbol, report);
-        context.fillStyle = rectGradient(context, rect, fill);
-        roundRect(context, rect.x, rect.y, rect.width, rect.height, Math.min(5 * ratio, rect.width / 5, rect.height / 5));
-        context.fill();
-        context.strokeStyle = "rgba(255,255,255,0.82)";
-        context.stroke();
-
-        if (rect.symbol.id === selectedId) {
-          selectedRect = rect;
-        }
-      }
-
-      if (selectedRect) {
-        drawSelectedTreemapFocus(context, selectedRect, groupColor(selectedRect.symbol, report), ratio);
-      }
-
-      for (const rect of rects) {
-        if (rect.width > 90 && rect.height > 34) {
-          const labelInset = 15 * ratio;
-          const labelBaseline = 24 * ratio;
-          const labelWidth = Math.max(0, rect.width - labelInset * 2);
-          context.fillStyle = readableText(groupColor(rect.symbol, report));
-          context.font = `${12 * ratio}px system-ui`;
-          context.fillText(
-            trim(rect.symbol.demangled, Math.floor(labelWidth / (7 * ratio))),
-            rect.x + labelInset,
-            rect.y + labelBaseline,
-          );
-        }
-      }
+      drawTreemapRects(canvas, rects, report, selectedIdRef.current);
     };
 
     draw();
     const observer = new ResizeObserver(draw);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [report, symbols, metric, selectedId]);
+  }, [report, symbols, metric]);
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+    const canvas = ref.current;
+    if (!canvas) return;
+    drawTreemapRects(canvas, rectsRef.current, report, selectedId);
+  }, [report, selectedId]);
 
   useEffect(() => {
     if (!contextMenu) return;
     const close = () => setContextMenu(null);
+    const closeOnPointerDown = (event: PointerEvent) => {
+      if (event.button === 0) close();
+    };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") close();
     };
-    window.addEventListener("click", close);
+    window.addEventListener("pointerdown", closeOnPointerDown);
     window.addEventListener("keydown", closeOnEscape);
-    window.addEventListener("scroll", close, true);
     return () => {
-      window.removeEventListener("click", close);
+      window.removeEventListener("pointerdown", closeOnPointerDown);
       window.removeEventListener("keydown", closeOnEscape);
-      window.removeEventListener("scroll", close, true);
     };
   }, [contextMenu]);
 
@@ -1853,6 +1831,7 @@ function TreemapCanvas({
               className="graphContextMenu treemapContextMenu"
               role="menu"
               style={{ left: contextMenu.x, top: contextMenu.y }}
+              onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => event.stopPropagation()}
               onContextMenu={(event) => event.preventDefault()}
             >
@@ -1899,6 +1878,52 @@ function metricLabel(metric: Metric): string {
   }[metric];
 }
 
+function drawTreemapRects(
+  canvas: HTMLCanvasElement,
+  rects: TreemapRect[],
+  report: StackwiseReport,
+  selectedId: number | null,
+) {
+  const context = canvas.getContext("2d");
+  if (!context) return;
+
+  const ratio = window.devicePixelRatio || 1;
+  const labels: Array<{ rect: TreemapRect; color: string }> = [];
+  let selectedRect: TreemapRect | null = null;
+  let selectedColor = "#0f766e";
+
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  for (const rect of rects) {
+    const fill = groupColor(rect.symbol, report);
+    context.fillStyle = rectGradient(context, rect, fill);
+    roundRect(context, rect.x, rect.y, rect.width, rect.height, Math.min(5 * ratio, rect.width / 5, rect.height / 5));
+    context.fill();
+    context.strokeStyle = "rgba(255,255,255,0.82)";
+    context.stroke();
+
+    if (rect.width > 90 && rect.height > 34) labels.push({ rect, color: readableText(fill) });
+    if (rect.symbol.id === selectedId) {
+      selectedRect = rect;
+      selectedColor = fill;
+    }
+  }
+
+  if (selectedRect) drawSelectedTreemapFocus(context, selectedRect, selectedColor, ratio);
+
+  context.font = `${12 * ratio}px system-ui`;
+  for (const { rect, color } of labels) {
+    const labelInset = 15 * ratio;
+    const labelBaseline = 24 * ratio;
+    const labelWidth = Math.max(0, rect.width - labelInset * 2);
+    context.fillStyle = color;
+    context.fillText(
+      trim(rect.symbol.demangled, Math.floor(labelWidth / (7 * ratio))),
+      rect.x + labelInset,
+      rect.y + labelBaseline,
+    );
+  }
+}
+
 function formatStackStatus(status: string): string {
   return {
     known: "measured",
@@ -1913,7 +1938,7 @@ type FlowData = {
   selected: boolean;
   dimmed: boolean;
   branchHighlighted: boolean;
-  onSymbolContextMenu?: (event: ReactMouseEvent<HTMLElement>, graphNode: GraphNode) => void;
+  onSymbolContextMenu?: (event: ReactMouseEvent<HTMLElement> | ReactPointerEvent<HTMLElement>, graphNode: GraphNode) => void;
   onSymbolDoubleClick?: (graphNode: Extract<GraphNode, { symbol: SymbolReport }>) => void;
   onRevealMore?: (ownerId: number, hiddenCount: number) => void;
 };
@@ -1994,11 +2019,16 @@ function CallGraphView({
     () => worstPathGraphSlice(focused.nodes, focused.edges, highlightedWorstBranchRootId),
     [focused.edges, focused.nodes, highlightedWorstBranchRootId],
   );
-  const { nodes, edges, extent } = useMemo(
-    () => layoutFlowGraph(visibleGraph.nodes, visibleGraph.edges, report, selectedId, layout, highlightedWorstBranchRootId),
-    [highlightedWorstBranchRootId, layout, report, selectedId, visibleGraph],
+  const layoutResult = useMemo(
+    () => layoutFlowGraph(visibleGraph.nodes, visibleGraph.edges, report, layout),
+    [layout, report, visibleGraph],
   );
-  const openSymbolContextMenu = useCallback((event: ReactMouseEvent<HTMLElement>, graphNode: GraphNode) => {
+  const nodes = useMemo(
+    () => decorateFlowNodes(layoutResult.nodes, selectedId, highlightedWorstBranchRootId),
+    [highlightedWorstBranchRootId, layoutResult.nodes, selectedId],
+  );
+  const { edges, extent } = layoutResult;
+  const openSymbolContextMenu = useCallback((event: ReactMouseEvent<HTMLElement> | ReactPointerEvent<HTMLElement>, graphNode: GraphNode) => {
     event.preventDefault();
     event.stopPropagation();
     if (!("symbol" in graphNode)) return;
@@ -2049,20 +2079,21 @@ function CallGraphView({
   useEffect(() => {
     if (!contextMenu) return;
     const close = () => setContextMenu(null);
+    const closeOnPointerDown = (event: PointerEvent) => {
+      if (event.button === 0) close();
+    };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") close();
     };
-    window.addEventListener("click", close);
+    window.addEventListener("pointerdown", closeOnPointerDown);
     window.addEventListener("keydown", closeOnEscape);
-    window.addEventListener("scroll", close, true);
     return () => {
-      window.removeEventListener("click", close);
+      window.removeEventListener("pointerdown", closeOnPointerDown);
       window.removeEventListener("keydown", closeOnEscape);
-      window.removeEventListener("scroll", close, true);
     };
   }, [contextMenu]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setContextMenu(null);
   }, [fitKey]);
 
@@ -2094,12 +2125,16 @@ function CallGraphView({
         nodesDraggable={false}
         nodesConnectable={false}
         connectOnClick={false}
-        onPaneClick={() => setContextMenu(null)}
+        onPaneClick={(event) => {
+          if (event.button === 0) setContextMenu(null);
+        }}
         onPaneContextMenu={(event) => {
           event.preventDefault();
+          if (event.target instanceof Element && event.target.closest(".react-flow__node")) return;
           setContextMenu(null);
         }}
         onNodeClick={(event, node) => {
+          if (event.button !== 0) return;
           setContextMenu(null);
           const graphNode = node.data.graphNode;
           if ("symbol" in graphNode) {
@@ -2151,6 +2186,7 @@ function CallGraphView({
               className="graphContextMenu"
               role="menu"
               style={{ left: contextMenu.x, top: contextMenu.y }}
+              onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => event.stopPropagation()}
               onContextMenu={(event) => event.preventDefault()}
             >
@@ -2254,6 +2290,12 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
       className={`callNode symbolNode ${node.relation}${data.selected ? " selected" : ""}${data.dimmed ? " dimmed" : ""}${data.branchHighlighted ? " branchHighlighted" : ""}`}
       style={{ "--node-color": data.color } as CSSProperties}
       title={symbol.demangled}
+      onPointerDown={(event) => {
+        if (event.button === 2) data.onSymbolContextMenu?.(event, node);
+      }}
+      onAuxClick={(event) => {
+        if (event.button === 2) data.onSymbolContextMenu?.(event, node);
+      }}
       onContextMenu={(event) => data.onSymbolContextMenu?.(event, node)}
       onDoubleClick={(event) => {
         event.preventDefault();
@@ -2589,9 +2631,7 @@ function layoutFlowGraph(
   graphNodes: GraphNode[],
   graphEdges: ReturnType<typeof buildFocusedCallGraph>["edges"],
   report: StackwiseReport,
-  selectedId: number | null,
   layout: GraphLayout,
-  highlightedWorstBranchRootId: number | null,
 ): { nodes: StackwiseFlowNode[]; edges: StackwiseFlowEdge[]; extent: CoordinateExtent } {
   const graph = new dagre.graphlib.Graph();
   graph.setDefaultEdgeLabel(() => ({}));
@@ -2629,11 +2669,11 @@ function layoutFlowGraph(
         graphNode,
         color: symbol ? groupColor(symbol, report) : markerKind === "limit" ? "#d97706" : "#64748b",
         layout,
-        selected: symbol?.id === selectedId,
+        selected: false,
         dimmed: false,
-        branchHighlighted: symbol != null && highlightedWorstBranchRootId === symbol.id,
+        branchHighlighted: false,
       },
-      selected: symbol?.id === selectedId,
+      selected: false,
       draggable: false,
     };
   });
@@ -2659,6 +2699,31 @@ function layoutFlowGraph(
   }));
 
   return { nodes, edges, extent: graphWorkspaceExtent(nodes) };
+}
+
+function decorateFlowNodes(
+  nodes: StackwiseFlowNode[],
+  selectedId: number | null,
+  highlightedWorstBranchRootId: number | null,
+): StackwiseFlowNode[] {
+  return nodes.map((node) => {
+    const graphNode = node.data.graphNode;
+    const symbol = "symbol" in graphNode ? graphNode.symbol : null;
+    const selected = symbol?.id === selectedId;
+    const branchHighlighted = symbol != null && highlightedWorstBranchRootId === symbol.id;
+    if (node.data.selected === selected && node.data.branchHighlighted === branchHighlighted && node.selected === selected) {
+      return node;
+    }
+    return {
+      ...node,
+      selected,
+      data: {
+        ...node.data,
+        selected,
+        branchHighlighted,
+      },
+    };
+  });
 }
 
 function graphWorkspaceExtent(nodes: StackwiseFlowNode[]): CoordinateExtent {
