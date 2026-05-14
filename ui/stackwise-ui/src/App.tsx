@@ -221,6 +221,8 @@ function ReportView({ report }: { report: StackwiseReport }) {
   const visibleSymbolIds = useMemo(() => new Set(symbols.map((symbol) => symbol.id)), [symbols]);
   const [graphHistory, setGraphHistory] = useState<GraphNavigationHistory>(() => initialGraphHistory());
   const graphState = graphHistory.present;
+  const canUndoGraphNavigation = graphHistory.past.length > 0;
+  const canRedoGraphNavigation = graphHistory.future.length > 0;
   const { rootId: graphRootId, nodeLimit, layout: graphLayout } = graphState;
   const edgeKinds = useMemo(() => new Set(graphState.edgeKinds), [graphState.edgeKinds]);
   const revealOwnerIds = useMemo(() => new Set(graphState.revealOwnerIds), [graphState.revealOwnerIds]);
@@ -309,8 +311,33 @@ function ReportView({ report }: { report: StackwiseReport }) {
     ...current,
     highlightBranchRootId: symbolId,
   }));
-  const undoGraphNavigation = () => setGraphHistory(undoGraphHistory);
-  const redoGraphNavigation = () => setGraphHistory(redoGraphHistory);
+  const undoGraphNavigation = useCallback(() => setGraphHistory(undoGraphHistory), []);
+  const redoGraphNavigation = useCallback(() => setGraphHistory(redoGraphHistory), []);
+
+  useEffect(() => {
+    if (viewMode !== "call_graph") return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing) return;
+      if (!event.ctrlKey || event.altKey || event.metaKey || event.key.toLowerCase() !== "z") return;
+      if (isEditableKeyboardTarget(event.target)) return;
+
+      if (event.shiftKey) {
+        if (!canRedoGraphNavigation) return;
+        event.preventDefault();
+        redoGraphNavigation();
+        return;
+      }
+
+      if (!canUndoGraphNavigation) return;
+      event.preventDefault();
+      undoGraphNavigation();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [canRedoGraphNavigation, canUndoGraphNavigation, redoGraphNavigation, undoGraphNavigation, viewMode]);
+
   const pivotToSymbol = (symbolId: number) => commitGraphNavigation((current) => ({
     ...current,
     rootId: symbolId,
@@ -457,8 +484,8 @@ function ReportView({ report }: { report: StackwiseReport }) {
             focusMode={effectiveGraphMode}
             focusSymbol={graphFocusSymbol}
             graphLayout={graphLayout}
-            canUndo={graphHistory.past.length > 0}
-            canRedo={graphHistory.future.length > 0}
+            canUndo={canUndoGraphNavigation}
+            canRedo={canRedoGraphNavigation}
             onUndo={undoGraphNavigation}
             onRedo={redoGraphNavigation}
             setNodeLimit={setNodeLimit}
@@ -629,6 +656,35 @@ function ViewTabs({
       </button>
     </div>
   );
+}
+
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement
+  ) {
+    return true;
+  }
+  return target.isContentEditable || Boolean(target.closest("[contenteditable]:not([contenteditable='false'])"));
+}
+
+function visibleDirectCallerCount(
+  report: StackwiseReport,
+  symbols: SymbolReport[],
+  rootId: number,
+  edgeKinds: ReadonlySet<EdgeKind>,
+): number {
+  const visibleIds = new Set(symbols.map((symbol) => symbol.id));
+  visibleIds.add(rootId);
+  const callers = new Set<number>();
+  for (const edge of report.edges) {
+    if (edge.callee !== rootId || edge.caller === rootId) continue;
+    if (!edgeKinds.has(edge.kind) || !visibleIds.has(edge.caller)) continue;
+    callers.add(edge.caller);
+  }
+  return callers.size;
 }
 
 function initialGraphHistory(): GraphNavigationHistory {
@@ -1412,6 +1468,11 @@ function CodePanel({
 }) {
   if (loading) return <div className="codePanel"><p className="contextMessage">Loading source and disassembly...</p></div>;
   if (!context) return <div className="codePanel"><p className="contextMessage">Select a symbol to load source and disassembly.</p></div>;
+  const contextMessages = context.messages.length > 0
+    ? context.messages
+    : !context.source && !context.disassembly
+      ? ["No source or disassembly was returned for this symbol. The report may lack source locations, the artifact may be unavailable, or this server may not provide symbol context."]
+      : [];
 
   return (
     <div className="codePanel">
@@ -1468,7 +1529,7 @@ function CodePanel({
           <DisassemblyLines disassembly={context.disassembly} />
         </div>
       ) : null}
-      {context.messages.map((message) => <p className="contextMessage" key={message}>{message}</p>)}
+      {contextMessages.map((message) => <p className="contextMessage" key={message}>{message}</p>)}
       {popout ? <CodeModal context={context} kind={popout} symbolId={symbol.id} onClose={() => setPopout(null)} /> : null}
     </div>
   );
@@ -1983,9 +2044,11 @@ type FlowData = {
   selected: boolean;
   dimmed: boolean;
   branchHighlighted: boolean;
+  hiddenCallerCount?: number;
   onSymbolContextMenu?: (event: ReactMouseEvent<HTMLElement> | ReactPointerEvent<HTMLElement>, graphNode: GraphNode) => void;
   onSymbolDoubleClick?: (graphNode: Extract<GraphNode, { symbol: SymbolReport }>) => void;
   onRevealMore?: (ownerId: number, hiddenCount: number) => void;
+  onShowCallers?: (symbolId: number) => void;
 };
 type StackwiseFlowNode = FlowNode<FlowData, "stackwise">;
 type FlowEdgeData = {
@@ -2068,6 +2131,12 @@ function CallGraphView({
     () => layoutFlowGraph(visibleGraph.nodes, visibleGraph.edges, report, layout),
     [layout, report, visibleGraph],
   );
+  const hiddenRootCallerCount = useMemo(
+    () => focused.rootId == null || direction === "callers"
+      ? 0
+      : visibleDirectCallerCount(report, symbols, focused.rootId, edgeKinds),
+    [direction, edgeKinds, focused.rootId, report, symbols],
+  );
   const nodes = useMemo(
     () => decorateFlowNodes(layoutResult.nodes, selectedId, highlightedWorstBranchRootId),
     [highlightedWorstBranchRootId, layoutResult.nodes, selectedId],
@@ -2093,6 +2162,9 @@ function CallGraphView({
       ...node,
       data: {
         ...node.data,
+        hiddenCallerCount: node.id === (focused.rootId == null ? "" : symbolNodeId(focused.rootId))
+          ? hiddenRootCallerCount
+          : 0,
         onSymbolContextMenu: openSymbolContextMenu,
         onSymbolDoubleClick: (graphNode) => {
           setContextMenu(null);
@@ -2100,9 +2172,10 @@ function CallGraphView({
           onShowInTreemap(graphNode.symbol.id);
         },
         onRevealMore,
+        onShowCallers,
       },
     })),
-    [nodes, onRevealMore, onShowInTreemap, openSymbolContextMenu, setSelectedId],
+    [focused.rootId, hiddenRootCallerCount, nodes, onRevealMore, onShowCallers, onShowInTreemap, openSymbolContextMenu, setSelectedId],
   );
   const fitKey = useMemo(
     () => `${focused.rootId}:${direction}:${highlightedWorstBranchRootId ?? "all"}:${layout}:${[...edgeKinds].sort().join(",")}:${symbols.length}`,
@@ -2111,10 +2184,11 @@ function CallGraphView({
   const rootFitViewOptions = useMemo<FitViewOptions<StackwiseFlowNode>>(
     () => {
       const fitIds = focused.rootId == null ? [] : rootIntroFitNodeIds(focused.edges, focused.rootId, direction);
+      const smallIntro = fitIds.length <= 3;
       return {
         nodes: fitIds.length ? fitIds.map((id) => ({ id })) : undefined,
-        padding: 1.2,
-        minZoom: fitIds.length <= 3 ? 1.04 : 0.72,
+        padding: smallIntro ? 0.38 : 1.2,
+        minZoom: smallIntro ? 0.52 : 0.72,
         maxZoom: 1.18,
       };
     },
@@ -2331,6 +2405,7 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
   }
 
   const symbol = node.symbol;
+  const hiddenCallerCount = data.hiddenCallerCount ?? 0;
   return (
     <div
       className={`callNode symbolNode ${node.relation}${data.selected ? " selected" : ""}${data.dimmed ? " dimmed" : ""}${data.branchHighlighted ? " branchHighlighted" : ""}`}
@@ -2353,6 +2428,20 @@ function StackwiseGraphNode({ data }: NodeProps<StackwiseFlowNode>) {
       <Handle type="source" position={handles.source} isConnectable={false} />
       <div className="nodeTopline">
         <span className="nodeRelation">{node.relation}</span>
+        {node.relation === "root" && hiddenCallerCount > 0 ? (
+          <button
+            className="callerHintPill"
+            type="button"
+            title="Show callers for this root"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              data.onShowCallers?.(symbol.id);
+            }}
+          >
+            Hidden callers +{hiddenCallerCount.toLocaleString()}
+          </button>
+        ) : null}
       </div>
       <strong>{shortSymbolName(symbol.demangled)}</strong>
       <span className="nodeModule">{symbolCrate(symbol) ?? "unknown crate"}</span>
@@ -2431,8 +2520,8 @@ function GraphTargetFocus({
 
     const timeout = window.setTimeout(() => {
       void flow.setCenter(centerX, centerY, {
-        duration: 180,
-        zoom: 1.18,
+        duration: 0,
+        zoom: 1.22,
       });
     }, 60);
     return () => window.clearTimeout(timeout);
@@ -2606,24 +2695,36 @@ function TightMiniMap({
             const centerY = toMiniY(node.position.y + nodeHeight / 2);
             const isRoot = node.data.graphNode.relation === "root";
             const isLimit = !("symbol" in node.data.graphNode) && node.data.graphNode.markerKind === "limit";
-            const size = isRoot ? 7 : isLimit ? 5.4 : 3.5;
+            const size = isRoot ? 11 : isLimit ? 5.4 : 3.5;
+            const markerX = clamp(centerX, size / 2, width - size / 2);
+            const markerY = clamp(centerY, size / 2, height - size / 2);
             return (
-              <rect
-                className={`react-flow__minimap-node miniNode ${node.data.graphNode.relation}${isRoot ? " root" : ""}`}
-                fill={isLimit ? "#d97706" : node.data.color}
-                height={size}
+              <g
+                className={`miniNodeGroup ${node.data.graphNode.relation}${isRoot ? " root" : ""}`}
                 key={node.id}
                 onClick={(event) => {
                   event.stopPropagation();
                   onNodeClick(node);
                 }}
-                rx={Math.min(2, size / 2)}
-                stroke="var(--minimap-node-stroke)"
-                strokeWidth={isRoot ? 1.3 : 0.75}
-                width={size}
-                x={clamp(centerX - size / 2, 0, width - size)}
-                y={clamp(centerY - size / 2, 0, height - size)}
-              />
+              >
+                {isRoot ? (
+                  <>
+                    <circle className="miniRootHalo" cx={markerX} cy={markerY} r={11.5} />
+                    <circle className="miniRootRing" cx={markerX} cy={markerY} r={7.4} />
+                  </>
+                ) : null}
+                <rect
+                  className={`react-flow__minimap-node miniNode ${node.data.graphNode.relation}${isRoot ? " root" : ""}`}
+                  fill={isLimit ? "#d97706" : node.data.color}
+                  height={size}
+                  rx={isRoot ? 3.5 : Math.min(2, size / 2)}
+                  stroke="var(--minimap-node-stroke)"
+                  strokeWidth={isRoot ? 2 : 0.75}
+                  width={size}
+                  x={markerX - size / 2}
+                  y={markerY - size / 2}
+                />
+              </g>
             );
           })}
           <path className="react-flow__minimap-mask" d={maskPath} fillRule="evenodd" pointerEvents="none" />

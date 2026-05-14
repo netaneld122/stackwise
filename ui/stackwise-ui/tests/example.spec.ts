@@ -236,12 +236,14 @@ test("renders the application shell", async ({ page }) => {
   const rootNode = page.locator(".symbolNode.root").filter({ hasText: "demo::main" });
   await expect(rootNode).toBeVisible();
   await expect(page.locator(".symbolNode").filter({ hasText: "demo::leaf" })).toBeVisible();
-  await expect.poll(async () => graphZoom(page)).toBeGreaterThanOrEqual(1.03);
+  await expect.poll(async () => graphZoom(page)).toBeGreaterThanOrEqual(0.5);
   const graphBox = await page.locator(".react-flow").boundingBox();
   const rootNodeBox = await rootNode.boundingBox();
   if (!graphBox || !rootNodeBox) throw new Error("Expected call graph and root bounds");
   expect(rootNodeBox.x + rootNodeBox.width / 2).toBeGreaterThan(graphBox.x + graphBox.width * 0.32);
   expect(rootNodeBox.x + rootNodeBox.width / 2).toBeLessThan(graphBox.x + graphBox.width * 0.68);
+  expect(rootNodeBox.y).toBeGreaterThanOrEqual(graphBox.y);
+  expect(rootNodeBox.y + rootNodeBox.height).toBeLessThanOrEqual(graphBox.y + graphBox.height);
   await expect(page.getByText("Cumulative").first()).toBeVisible();
   await expect(page.getByText("+24 B")).toBeVisible();
   const nodeLimitSlider = page.getByLabel("Call graph node limit");
@@ -270,7 +272,7 @@ test("renders the application shell", async ({ page }) => {
     graphMenuBox.y - (leafNodeBox.y + leafNodeBox.height),
     leafNodeBox.y - (graphMenuBox.y + graphMenuBox.height),
   );
-  expect(horizontalGap).toBeLessThanOrEqual(12);
+  expect(horizontalGap).toBeLessThanOrEqual(28);
   expect(verticalGap).toBeLessThanOrEqual(48);
   await expect(page.getByRole("menuitem", { name: "Set as root" })).toBeVisible();
   await page.getByRole("menuitem", { name: "Show callers" }).click();
@@ -278,13 +280,18 @@ test("renders the application shell", async ({ page }) => {
   await expect(graphFocusStatus).toContainText("demo::leaf");
   await expect(page.locator(".symbolNode.root")).toContainText("leaf");
   await expect(undoGraph).toBeEnabled();
-  await undoGraph.click();
+  await page.keyboard.press("Control+Z");
   await expect(graphFocusStatus).toContainText("Default root");
   await expect(page.locator(".symbolNode.root")).toContainText("main");
   await expect(redoGraph).toBeEnabled();
-  await redoGraph.click();
+  await page.keyboard.press("Control+Shift+Z");
   await expect(graphFocusStatus).toContainText("Showing callers");
   await expect(page.locator(".symbolNode.root")).toContainText("leaf");
+  const graphSearch = page.getByPlaceholder("Symbol, crate, module");
+  await graphSearch.fill("leaf");
+  await page.keyboard.press("Control+Z");
+  await expect(graphFocusStatus).toContainText("Showing callers");
+  await graphSearch.fill("");
   await page.locator(".symbolNode.root").click({ button: "right" });
   await expect(page.getByRole("menuitem", { name: "Unset as root" })).toBeVisible();
   await page.getByRole("menuitem", { name: "Unset as root" }).click();
@@ -378,6 +385,20 @@ async function minimapMaskScreenRect(page: Page): Promise<{ x: number; y: number
   });
 }
 
+async function expectSelectedGraphNodeCentered(page: Page, tolerance = 3) {
+  await expect.poll(async () => {
+    const selectedGraphNodeBox = await page.locator(".symbolNode.selected").boundingBox();
+    const graphPaneBox = await page.locator(".graphShell .react-flow").boundingBox();
+    if (!selectedGraphNodeBox || !graphPaneBox) return Number.POSITIVE_INFINITY;
+
+    const nodeCenterX = selectedGraphNodeBox.x + selectedGraphNodeBox.width / 2;
+    const nodeCenterY = selectedGraphNodeBox.y + selectedGraphNodeBox.height / 2;
+    const graphCenterX = graphPaneBox.x + graphPaneBox.width / 2;
+    const graphCenterY = graphPaneBox.y + graphPaneBox.height / 2;
+    return Math.max(Math.abs(nodeCenterX - graphCenterX), Math.abs(nodeCenterY - graphCenterY));
+  }, { timeout: 3000 }).toBeLessThanOrEqual(tolerance);
+}
+
 test("cross-navigates symbols between treemap and call graph context menus", async ({ page }) => {
   const symbols = [
     symbolFixture(0, "demo::main", ["demo"], 16),
@@ -402,13 +423,7 @@ test("cross-navigates symbols between treemap and call graph context menus", asy
   await expect(page.locator(".graphFocusStatus")).toContainText("Pinned focus");
   const selectedGraphNode = page.locator(".symbolNode.selected");
   await expect(selectedGraphNode).toBeVisible();
-  const selectedGraphNodeBox = await selectedGraphNode.boundingBox();
-  const graphPaneBox = await page.locator(".graphShell").boundingBox();
-  if (!selectedGraphNodeBox || !graphPaneBox) throw new Error("Expected selected graph node and graph pane bounds");
-  expect(selectedGraphNodeBox.x + selectedGraphNodeBox.width / 2).toBeGreaterThan(graphPaneBox.x);
-  expect(selectedGraphNodeBox.x + selectedGraphNodeBox.width / 2).toBeLessThan(graphPaneBox.x + graphPaneBox.width);
-  expect(selectedGraphNodeBox.y + selectedGraphNodeBox.height / 2).toBeGreaterThan(graphPaneBox.y);
-  expect(selectedGraphNodeBox.y + selectedGraphNodeBox.height / 2).toBeLessThan(graphPaneBox.y + graphPaneBox.height);
+  await expectSelectedGraphNodeCentered(page);
 
   const graphNode = page.locator(".symbolNode").first();
   await expect(graphNode).toBeVisible();
@@ -444,6 +459,7 @@ test("double-click cross-navigates symbols between treemap and call graph", asyn
   await expect(page.locator(".graphFocusStatus")).toContainText("Pinned focus");
   const selectedGraphNode = page.locator(".symbolNode.selected");
   await expect(selectedGraphNode).toBeVisible();
+  await expectSelectedGraphNodeCentered(page);
 
   const selectedGraphNodeBox = await selectedGraphNode.boundingBox();
   if (!selectedGraphNodeBox) throw new Error("Expected selected graph node bounds");
@@ -525,6 +541,8 @@ test("renders call graph minimap nodes for larger reports", async ({ page }) => 
   await page.getByRole("tab", { name: "Call Graph" }).click();
   await expect(page.locator(".callGraphMiniMap")).toBeVisible();
   await expect(page.locator(".callGraphMiniMap title")).toHaveText("Call graph minimap");
+  await expect(page.locator(".callGraphMiniMap .miniRootHalo")).toHaveCount(1);
+  await expect(page.locator(".callGraphMiniMap .miniRootRing")).toHaveCount(1);
   await expect.poll(async () => page.locator(".callGraphMiniMap .react-flow__minimap-node").count()).toBeGreaterThan(8);
   const beforeDrag = await minimapMaskScreenRect(page);
   await page.mouse.move(beforeDrag.x + beforeDrag.width / 2, beforeDrag.y + beforeDrag.height / 2);
@@ -545,6 +563,38 @@ test("renders call graph minimap nodes for larger reports", async ({ page }) => 
   const afterLimitDrag = await minimapMaskScreenRect(page);
   expect(Math.abs(afterLimitDrag.width - afterDrag.width)).toBeLessThan(1);
   expect(Math.abs(afterLimitDrag.height - afterDrag.height)).toBeLessThan(1);
+});
+
+test("root hidden caller hint opens callers view", async ({ page }) => {
+  const symbols = [
+    symbolFixture(0, "demo::main", ["demo"], 16),
+    symbolFixture(1, "demo::leaf", ["demo"], 64),
+    symbolFixture(2, "demo::bootstrap", ["demo"], 24),
+  ];
+  const edges = [edgeFixture(2, 0), edgeFixture(0, 1)];
+
+  await page.route("/report.json", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(reportFixture(symbols, edges)),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Call Graph" }).click();
+  await expect(page.locator(".graphFocusStatus")).toContainText("Default root");
+  await expect(page.locator(".symbolNode.root")).toContainText("main");
+  await expect(page.locator(".symbolNode").filter({ hasText: "demo::leaf" })).toBeVisible();
+
+  const callerHint = page.getByRole("button", { name: "Hidden callers +1" });
+  await expect(callerHint).toBeVisible();
+  await callerHint.click();
+
+  await expect(page.locator(".graphFocusStatus")).toContainText("Showing callers");
+  await expect(page.locator(".graphFocusStatus")).toContainText("demo::main");
+  await expect(page.locator(".symbolNode.root")).toContainText("main");
+  await expect(page.locator(".symbolNode").filter({ hasText: "demo::bootstrap" })).toBeVisible();
+  await expect(page.locator(".callerHintPill")).toHaveCount(0);
 });
 
 test("does not label edges into indirect call boundary nodes", async ({ page }) => {
@@ -569,7 +619,11 @@ test("does not label edges into indirect call boundary nodes", async ({ page }) 
   await page.goto("/");
   await page.getByRole("tab", { name: "Call Graph" }).click();
   await expect(page.locator(".boundaryNode")).toContainText("Indirect call");
-  await expect(page.locator(".callEdge.indirect_call")).toBeVisible();
+  await expect.poll(async () => {
+    const path = await page.locator(".callEdge.indirect_call .react-flow__edge-path").elementHandle();
+    if (!path) return 0;
+    return path.evaluate((element) => (element as SVGPathElement).getTotalLength());
+  }).toBeGreaterThan(0);
   await expect(page.locator(".callEdgeLabel.indirect_call")).toHaveCount(0);
 });
 
@@ -800,6 +854,30 @@ test("unmeasured-only filtering does not crash the treemap", async ({ page }) =>
   await measurementSelect.selectOption("unmeasured");
   await expect(page.getByText("Stackwise")).toBeVisible();
   await expect(page.getByText("No positive own-frame values match the current filters.")).toBeVisible();
+});
+
+test("explains empty source and disassembly context responses", async ({ page }) => {
+  const symbols = [symbolFixture(0, "demo::main", ["demo"], 16)];
+  await page.route("/report.json", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(reportFixture(symbols, [])),
+    });
+  });
+  await page.route("/api/symbol-context**", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ source: null, disassembly: null, messages: [] }),
+    });
+  });
+
+  await page.goto("/");
+  const treemapBox = await page.locator(".treemapShell canvas").boundingBox();
+  if (!treemapBox) throw new Error("Expected treemap canvas bounds");
+  await page.mouse.click(treemapBox.x + treemapBox.width / 2, treemapBox.y + treemapBox.height / 2);
+
+  await expect(page.locator(".detailCard")).toContainText("demo::main");
+  await expect(page.locator(".codePanel .contextMessage")).toContainText("No source or disassembly was returned");
 });
 
 async function edgeLabelsOverlapNodes(page: Page): Promise<boolean> {
