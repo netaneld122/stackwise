@@ -1710,8 +1710,9 @@ function TreemapCanvas({
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const { setSelectedId } = useStackwiseStore();
-  const rectsRef = useRef<TreemapRect[]>([]);
   const hitIndexRef = useRef<TreemapHitIndex | null>(null);
+  const baseCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const paintRectBySymbolIdRef = useRef<Map<number, TreemapPaintRect>>(new Map());
   const selectedIdRef = useRef(selectedId);
   const [hovered, setHovered] = useState<{ symbol: SymbolReport; x: number; y: number } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; symbol: SymbolReport } | null>(null);
@@ -1743,11 +1744,14 @@ function TreemapCanvas({
 
       context.clearRect(0, 0, canvas.width, canvas.height);
       const rects = buildTreemap(symbols, metric, canvas.width, canvas.height, report);
-      rectsRef.current = rects;
       hitIndexRef.current = buildTreemapHitIndex(rects, canvas.width, canvas.height);
+      const paintRects = createTreemapPaintRects(rects, report);
+      paintRectBySymbolIdRef.current = new Map(paintRects.map((item) => [item.rect.symbol.id, item]));
+      const baseCanvas = resizeTreemapBaseCanvas(baseCanvasRef, canvas.width, canvas.height);
+      drawTreemapBase(baseCanvas, paintRects);
       const nextHasRects = rects.length > 0;
       setHasRects((current) => (current === nextHasRects ? current : nextHasRects));
-      drawTreemapRects(canvas, rects, report, selectedIdRef.current);
+      drawTreemapFrame(canvas, baseCanvas, paintRectBySymbolIdRef.current, selectedIdRef.current);
     };
 
     draw();
@@ -1759,9 +1763,10 @@ function TreemapCanvas({
   useEffect(() => {
     selectedIdRef.current = selectedId;
     const canvas = ref.current;
-    if (!canvas) return;
-    drawTreemapRects(canvas, rectsRef.current, report, selectedId);
-  }, [report, selectedId]);
+    const baseCanvas = baseCanvasRef.current;
+    if (!canvas || !baseCanvas) return;
+    drawTreemapFrame(canvas, baseCanvas, paintRectBySymbolIdRef.current, selectedId);
+  }, [selectedId]);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -1878,50 +1883,90 @@ function metricLabel(metric: Metric): string {
   }[metric];
 }
 
-function drawTreemapRects(
-  canvas: HTMLCanvasElement,
-  rects: TreemapRect[],
-  report: StackwiseReport,
-  selectedId: number | null,
-) {
+type TreemapPaintRect = {
+  rect: TreemapRect;
+  fill: string;
+  textColor: string;
+};
+
+function createTreemapPaintRects(rects: TreemapRect[], report: StackwiseReport): TreemapPaintRect[] {
+  return rects.map((rect) => {
+    const fill = groupColor(rect.symbol, report);
+    return {
+      rect,
+      fill,
+      textColor: readableText(fill),
+    };
+  });
+}
+
+function resizeTreemapBaseCanvas(
+  ref: { current: HTMLCanvasElement | null },
+  width: number,
+  height: number,
+): HTMLCanvasElement {
+  const canvas = ref.current ?? document.createElement("canvas");
+  ref.current = canvas;
+  canvas.width = width;
+  canvas.height = height;
+  return canvas;
+}
+
+function drawTreemapBase(canvas: HTMLCanvasElement, paintRects: TreemapPaintRect[]) {
   const context = canvas.getContext("2d");
   if (!context) return;
 
   const ratio = window.devicePixelRatio || 1;
-  const labels: Array<{ rect: TreemapRect; color: string }> = [];
-  let selectedRect: TreemapRect | null = null;
-  let selectedColor = "#0f766e";
+  const labels: TreemapPaintRect[] = [];
 
   context.clearRect(0, 0, canvas.width, canvas.height);
-  for (const rect of rects) {
-    const fill = groupColor(rect.symbol, report);
-    context.fillStyle = rectGradient(context, rect, fill);
-    roundRect(context, rect.x, rect.y, rect.width, rect.height, Math.min(5 * ratio, rect.width / 5, rect.height / 5));
-    context.fill();
-    context.strokeStyle = "rgba(255,255,255,0.82)";
-    context.stroke();
-
-    if (rect.width > 90 && rect.height > 34) labels.push({ rect, color: readableText(fill) });
-    if (rect.symbol.id === selectedId) {
-      selectedRect = rect;
-      selectedColor = fill;
+  for (const item of paintRects) {
+    const { rect, fill } = item;
+    if (rect.width <= 10 * ratio || rect.height <= 10 * ratio) {
+      context.fillStyle = fill;
+      context.fillRect(rect.x, rect.y, rect.width, rect.height);
+      context.strokeStyle = "rgba(255,255,255,0.62)";
+      context.strokeRect(rect.x, rect.y, rect.width, rect.height);
+    } else {
+      context.fillStyle = rectGradient(context, rect, fill);
+      roundRect(context, rect.x, rect.y, rect.width, rect.height, Math.min(5 * ratio, rect.width / 5, rect.height / 5));
+      context.fill();
+      context.strokeStyle = "rgba(255,255,255,0.82)";
+      context.stroke();
     }
+
+    if (rect.width > 90 && rect.height > 34) labels.push(item);
   }
 
-  if (selectedRect) drawSelectedTreemapFocus(context, selectedRect, selectedColor, ratio);
-
   context.font = `${12 * ratio}px system-ui`;
-  for (const { rect, color } of labels) {
+  for (const { rect, textColor } of labels) {
     const labelInset = 15 * ratio;
     const labelBaseline = 24 * ratio;
     const labelWidth = Math.max(0, rect.width - labelInset * 2);
-    context.fillStyle = color;
+    context.fillStyle = textColor;
     context.fillText(
       trim(rect.symbol.demangled, Math.floor(labelWidth / (7 * ratio))),
       rect.x + labelInset,
       rect.y + labelBaseline,
     );
   }
+}
+
+function drawTreemapFrame(
+  canvas: HTMLCanvasElement,
+  baseCanvas: HTMLCanvasElement,
+  paintRectBySymbolId: ReadonlyMap<number, TreemapPaintRect>,
+  selectedId: number | null,
+) {
+  const context = canvas.getContext("2d");
+  if (!context) return;
+
+  const ratio = window.devicePixelRatio || 1;
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(baseCanvas, 0, 0);
+
+  const selected = selectedId == null ? null : paintRectBySymbolId.get(selectedId);
+  if (selected) drawSelectedTreemapFocus(context, selected.rect, selected.fill, ratio);
 }
 
 function formatStackStatus(status: string): string {
@@ -1946,7 +1991,7 @@ type StackwiseFlowNode = FlowNode<FlowData, "stackwise">;
 type FlowEdgeData = {
   label: string;
   kind: GraphEdgeKind;
-  labelBlockRects: LabelBlockRect[];
+  showLabel: boolean;
 };
 type StackwiseFlowEdge = FlowEdge<FlowEdgeData, "stackwise">;
 type LabelBlockRect = {
@@ -2125,6 +2170,7 @@ function CallGraphView({
         nodesDraggable={false}
         nodesConnectable={false}
         connectOnClick={false}
+        onlyRenderVisibleElements={nodes.length > 900}
         onPaneClick={(event) => {
           if (event.button === 0) setContextMenu(null);
         }}
@@ -2338,15 +2384,12 @@ function StackwiseGraphEdge({
     targetPosition,
   });
   const label = data?.label;
-  const labelRect = label == null ? null : edgeLabelRect(label, labelX, labelY);
-  const labelOverlapsNode = labelRect != null && (data?.labelBlockRects ?? []).some((rect) =>
-    rectsOverlap(labelRect, expandRect(rect, 3)),
-  );
+  const showLabel = Boolean(label && data?.showLabel);
 
   return (
     <>
       <BaseEdge path={path} markerEnd={markerEnd} />
-      {label && !labelOverlapsNode ? (
+      {showLabel ? (
         <EdgeLabelRenderer>
           <div
             className={`callEdgeLabel ${data?.kind ?? "direct_call"}`}
@@ -2414,6 +2457,11 @@ function TightMiniMap({
     offsetX: number;
     offsetY: number;
     zoom: number;
+  } | null>(null);
+  const handlersRef = useRef<{
+    begin: (event: PointerEvent) => void;
+    drag: (event: PointerEvent) => void;
+    end: (event: PointerEvent) => void;
   } | null>(null);
   const width = 248;
   const height = 168;
@@ -2513,18 +2561,26 @@ function TightMiniMap({
   };
 
   useEffect(() => {
+    handlersRef.current = {
+      begin: beginMinimapDrag,
+      drag: dragMinimap,
+      end: endMinimapDrag,
+    };
+  });
+
+  useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
       if (!(event.target instanceof Element) || !event.target.closest(".callGraphMiniMap")) return;
-      beginMinimapDrag(event);
+      handlersRef.current?.begin(event);
     };
     const onPointerMove = (event: PointerEvent) => {
       if (dragState.current?.pointerId !== event.pointerId) return;
       event.preventDefault();
       event.stopPropagation();
-      dragMinimap(event);
+      handlersRef.current?.drag(event);
     };
     const onPointerUp = (event: PointerEvent) => {
-      endMinimapDrag(event);
+      handlersRef.current?.end(event);
     };
     window.addEventListener("pointerdown", onPointerDown, true);
     window.addEventListener("pointermove", onPointerMove, true);
@@ -2536,7 +2592,7 @@ function TightMiniMap({
       window.removeEventListener("pointerup", onPointerUp, true);
       window.removeEventListener("pointercancel", onPointerUp, true);
     };
-  });
+  }, []);
 
   return (
     <div className="tightMiniMapDragLayer">
@@ -2677,28 +2733,144 @@ function layoutFlowGraph(
       draggable: false,
     };
   });
-  const labelBlockRects = nodes.map((node) => ({
-    x: node.position.x,
-    y: node.position.y,
-    width: node.width ?? node.measured?.width ?? 0,
-    height: node.height ?? node.measured?.height ?? 0,
-  }));
+  const showEdgeLabels = graphNodes.length <= 900;
+  const nodeById = showEdgeLabels ? new Map(nodes.map((node) => [node.id, node])) : null;
+  const labelBlockIndex = showEdgeLabels
+    ? buildLabelBlockIndex(nodes.map((node) => ({
+        x: node.position.x,
+        y: node.position.y,
+        width: node.width ?? node.measured?.width ?? 0,
+        height: node.height ?? node.measured?.height ?? 0,
+      })))
+    : null;
+  const handles = showEdgeLabels ? handlePositions(layout) : null;
 
-  const edges = graphEdges.map<StackwiseFlowEdge>((edge) => ({
-    id: edge.id,
-    source: edge.source,
-    target: edge.target,
-    type: "stackwise",
-    data: {
-      label: graphEdgeLabel(edge),
-      kind: edge.kind,
-      labelBlockRects,
-    },
-    markerEnd: { type: MarkerType.ArrowClosed },
-    className: `callEdge ${edge.kind}`,
-  }));
+  const edges = graphEdges.map<StackwiseFlowEdge>((edge) => {
+    const label = graphEdgeLabel(edge);
+    return {
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      type: "stackwise",
+      data: {
+        label,
+        kind: edge.kind,
+        showLabel: showEdgeLabels && nodeById != null && handles != null && labelBlockIndex != null
+          ? graphEdgeLabelIsVisible(label, edge, nodeById, handles, labelBlockIndex)
+          : false,
+      },
+      markerEnd: { type: MarkerType.ArrowClosed },
+      className: `callEdge ${edge.kind}`,
+    };
+  });
 
   return { nodes, edges, extent: graphWorkspaceExtent(nodes) };
+}
+
+type LabelBlockIndex = {
+  minX: number;
+  minY: number;
+  width: number;
+  height: number;
+  columns: number;
+  rows: number;
+  buckets: LabelBlockRect[][];
+};
+
+function buildLabelBlockIndex(rects: LabelBlockRect[]): LabelBlockIndex {
+  if (rects.length === 0) {
+    return { minX: 0, minY: 0, width: 1, height: 1, columns: 1, rows: 1, buckets: [[]] };
+  }
+
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const rect of rects) {
+    minX = Math.min(minX, rect.x);
+    minY = Math.min(minY, rect.y);
+    maxX = Math.max(maxX, rect.x + rect.width);
+    maxY = Math.max(maxY, rect.y + rect.height);
+  }
+
+  const width = Math.max(1, maxX - minX);
+  const height = Math.max(1, maxY - minY);
+  const columns = Math.max(1, Math.min(64, Math.ceil(Math.sqrt(rects.length))));
+  const rows = Math.max(1, Math.min(64, Math.ceil(columns * (height / Math.max(1, width)))));
+  const buckets = Array.from({ length: columns * rows }, () => [] as LabelBlockRect[]);
+  const index = { minX, minY, width, height, columns, rows, buckets };
+
+  for (const rect of rects) {
+    forLabelBlockBuckets(index, expandRect(rect, 3), (bucket) => {
+      bucket.push(rect);
+    });
+  }
+
+  return index;
+}
+
+function graphEdgeLabelIsVisible(
+  label: string,
+  edge: ReturnType<typeof buildFocusedCallGraph>["edges"][number],
+  nodeById: ReadonlyMap<string, StackwiseFlowNode>,
+  handles: { target: Position; source: Position },
+  labelBlockIndex: LabelBlockIndex,
+): boolean {
+  if (!label) return false;
+  const source = nodeById.get(edge.source);
+  const target = nodeById.get(edge.target);
+  if (!source || !target) return true;
+
+  const sourcePoint = graphHandlePoint(source, handles.source);
+  const targetPoint = graphHandlePoint(target, handles.target);
+  const [, labelX, labelY] = getSmoothStepPath({
+    sourceX: sourcePoint.x,
+    sourceY: sourcePoint.y,
+    sourcePosition: handles.source,
+    targetX: targetPoint.x,
+    targetY: targetPoint.y,
+    targetPosition: handles.target,
+  });
+  return !labelBlockIndexOverlaps(labelBlockIndex, edgeLabelRect(label, labelX, labelY));
+}
+
+function graphHandlePoint(node: StackwiseFlowNode, position: Position): { x: number; y: number } {
+  const width = node.width ?? node.measured?.width ?? 0;
+  const height = node.height ?? node.measured?.height ?? 0;
+  if (position === Position.Top) return { x: node.position.x + width / 2, y: node.position.y };
+  if (position === Position.Bottom) return { x: node.position.x + width / 2, y: node.position.y + height };
+  if (position === Position.Left) return { x: node.position.x, y: node.position.y + height / 2 };
+  return { x: node.position.x + width, y: node.position.y + height / 2 };
+}
+
+function labelBlockIndexOverlaps(index: LabelBlockIndex, rect: LabelBlockRect): boolean {
+  let overlaps = false;
+  forLabelBlockBuckets(index, rect, (bucket) => {
+    if (overlaps) return;
+    overlaps = bucket.some((candidate) => rectsOverlap(rect, expandRect(candidate, 3)));
+  });
+  return overlaps;
+}
+
+function forLabelBlockBuckets(
+  index: LabelBlockIndex,
+  rect: LabelBlockRect,
+  visit: (bucket: LabelBlockRect[]) => void,
+) {
+  const minColumn = clampIndex(Math.floor(((rect.x - index.minX) / index.width) * index.columns), index.columns);
+  const maxColumn = clampIndex(Math.floor(((rect.x + rect.width - index.minX) / index.width) * index.columns), index.columns);
+  const minRow = clampIndex(Math.floor(((rect.y - index.minY) / index.height) * index.rows), index.rows);
+  const maxRow = clampIndex(Math.floor(((rect.y + rect.height - index.minY) / index.height) * index.rows), index.rows);
+
+  for (let row = minRow; row <= maxRow; row += 1) {
+    for (let column = minColumn; column <= maxColumn; column += 1) {
+      visit(index.buckets[row * index.columns + column]);
+    }
+  }
+}
+
+function clampIndex(value: number, size: number): number {
+  return Math.max(0, Math.min(size - 1, value));
 }
 
 function decorateFlowNodes(
