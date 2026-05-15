@@ -2908,6 +2908,8 @@ function layoutFlowGraph(
         branchHighlighted: false,
       },
       selected: false,
+      selectable: false,
+      focusable: false,
       draggable: false,
     };
   });
@@ -3061,12 +3063,12 @@ function decorateFlowNodes(
     const symbol = "symbol" in graphNode ? graphNode.symbol : null;
     const selected = symbol?.id === selectedId;
     const branchHighlighted = symbol != null && highlightedWorstBranchRootId === symbol.id;
-    if (node.data.selected === selected && node.data.branchHighlighted === branchHighlighted && node.selected === selected) {
+    if (node.data.selected === selected && node.data.branchHighlighted === branchHighlighted && node.selected === false) {
       return node;
     }
     return {
       ...node,
-      selected,
+      selected: false,
       data: {
         ...node.data,
         selected,

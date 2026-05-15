@@ -437,6 +437,33 @@ test("cross-navigates symbols between treemap and call graph context menus", asy
   await expect(page.locator(".detailCard")).toContainText(/demo::(?:main|leaf)/);
 });
 
+test("call graph selection does not promote React Flow root selection", async ({ page }) => {
+  const symbols = [
+    symbolFixture(0, "demo::main", ["demo"], 16),
+    symbolFixture(1, "demo::leaf", ["demo"], 64),
+  ];
+  await page.route("/report.json", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(reportFixture(symbols, [edgeFixture(0, 1)])),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Call Graph" }).click();
+
+  const rootNode = page.locator('.symbolNode[title="demo::main"]');
+  const leafNode = page.locator('.symbolNode[title="demo::leaf"]');
+  await rootNode.click();
+  await expect(rootNode).toHaveClass(/selected/);
+  await expect(page.locator(".react-flow__node.selected")).toHaveCount(0);
+
+  await leafNode.click();
+  await expect(leafNode).toHaveClass(/selected/);
+  await expect(page.locator(".symbolNode.root.selected")).toHaveCount(0);
+  await expect(page.locator(".react-flow__node.selected")).toHaveCount(0);
+});
+
 test("double-click cross-navigates symbols between treemap and call graph", async ({ page }) => {
   const symbols = [
     symbolFixture(0, "demo::main", ["demo"], 2048),
