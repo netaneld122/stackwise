@@ -20,6 +20,7 @@ export interface GraphOptions {
   edgeKinds: ReadonlySet<EdgeKind>;
   direction?: GraphDirection;
   revealOwnerIds?: ReadonlySet<number>;
+  pinnedSymbolIds?: ReadonlySet<number>;
 }
 
 export interface GraphSymbolNode {
@@ -68,6 +69,7 @@ export interface GraphReachabilityOptions {
   rootId: number | null;
   edgeKinds: ReadonlySet<EdgeKind>;
   direction?: GraphDirection;
+  pinnedSymbolIds?: ReadonlySet<number>;
 }
 
 interface GraphIndex {
@@ -126,6 +128,7 @@ export function countReachableCallGraphSymbols(
 ): { rootId: number | null; reachableNodeCount: number } {
   const allSymbolsById = new Map(report.symbols.map((symbol) => [symbol.id, symbol]));
   const visibleIds = new Set(visibleSymbols.map((symbol) => symbol.id));
+  addKnownIds(visibleIds, allSymbolsById, options.pinnedSymbolIds);
   const rootId = options.rootId != null && allSymbolsById.has(options.rootId)
     ? options.rootId
     : chooseDefaultRoot(report, visibleSymbols, null);
@@ -148,6 +151,7 @@ export function buildFocusedCallGraph(
 ): FocusedCallGraph {
   const allSymbolsById = new Map(report.symbols.map((symbol) => [symbol.id, symbol]));
   const visibleIds = new Set(visibleSymbols.map((symbol) => symbol.id));
+  addKnownIds(visibleIds, allSymbolsById, options.pinnedSymbolIds);
   const rootId = options.rootId != null && allSymbolsById.has(options.rootId)
     ? options.rootId
     : chooseDefaultRoot(report, visibleSymbols, null);
@@ -198,6 +202,7 @@ export function buildFocusedCallGraph(
     options.maxNodes,
     direction,
     options.revealOwnerIds ?? new Set(),
+    options.pinnedSymbolIds ?? new Set(),
   );
   const stackById = computeCumulativeStacks(rootId, nodeIds, relationById, depthById, index, options.edgeKinds);
   const nodes: GraphNode[] = [...nodeIds].map((id) => {
@@ -272,9 +277,14 @@ function pruneReachableGraph(
   maxNodes: number,
   direction: GraphDirection,
   revealOwnerIds: ReadonlySet<number>,
+  pinnedSymbolIds: ReadonlySet<number>,
 ): PrunedGraph {
   const nodeLimit = Math.max(1, Math.floor(maxNodes));
   const protectedIds = collectRevealProtectedIds(rootId, reachableNodeIds, index, edgeKinds, direction, revealOwnerIds);
+  for (const id of pinnedSymbolIds) {
+    if (reachableNodeIds.has(id)) protectedIds.add(id);
+  }
+  protectedIds.delete(rootId);
   const nodeIds = reachableNodeIds.size > nodeLimit
     ? selectRetainedNodeIds(rootId, reachableNodeIds, depthById, index, edgeKinds, direction, protectedIds, nodeLimit)
     : new Set(reachableNodeIds);
@@ -296,9 +306,12 @@ function selectRetainedNodeIds(
   protectedIds: ReadonlySet<number>,
   nodeLimit: number,
 ): Set<number> {
-  const retained = new Set<number>([rootId]);
-  const seen = new Set<number>([rootId]);
-  const queue = [rootId];
+  const retained =
+    protectedIds.size > 0
+      ? retainProtectedPaths(rootId, reachableNodeIds, depthById, index, edgeKinds, direction, protectedIds, nodeLimit)
+      : new Set<number>([rootId]);
+  const seen = new Set<number>(retained);
+  const queue = [...retained].sort((left, right) => (depthById.get(left) ?? 0) - (depthById.get(right) ?? 0) || left - right);
 
   for (let head = 0; head < queue.length && retained.size < nodeLimit; head += 1) {
     const current = queue[head];
@@ -329,6 +342,60 @@ function selectRetainedNodeIds(
   }
 
   return retained;
+}
+
+function retainProtectedPaths(
+  rootId: number,
+  reachableNodeIds: ReadonlySet<number>,
+  depthById: ReadonlyMap<number, number>,
+  index: GraphIndex,
+  edgeKinds: ReadonlySet<EdgeKind>,
+  direction: GraphDirection,
+  protectedIds: ReadonlySet<number>,
+  nodeLimit: number,
+): Set<number> {
+  const parents = buildTraversalParents(rootId, reachableNodeIds, index, edgeKinds, direction);
+  const retained = new Set<number>([rootId]);
+  const sortedProtectedIds = [...protectedIds]
+    .filter((id) => parents.has(id))
+    .sort((left, right) => (depthById.get(left) ?? 0) - (depthById.get(right) ?? 0) || left - right);
+
+  for (const id of sortedProtectedIds) {
+    for (const pathId of pathFromRoot(id, parents)) {
+      retained.add(pathId);
+      if (retained.size >= nodeLimit) return retained;
+    }
+  }
+
+  return retained;
+}
+
+function buildTraversalParents(
+  rootId: number,
+  reachableNodeIds: ReadonlySet<number>,
+  index: GraphIndex,
+  edgeKinds: ReadonlySet<EdgeKind>,
+  direction: GraphDirection,
+): Map<number, number | null> {
+  const parents = new Map<number, number | null>([[rootId, null]]);
+  const queue = [rootId];
+  for (let head = 0; head < queue.length; head += 1) {
+    const current = queue[head];
+    for (const nextId of traversalNextIds(current, direction, index, edgeKinds)) {
+      if (!reachableNodeIds.has(nextId) || parents.has(nextId)) continue;
+      parents.set(nextId, current);
+      queue.push(nextId);
+    }
+  }
+  return parents;
+}
+
+function pathFromRoot(id: number, parents: ReadonlyMap<number, number | null>): number[] {
+  const path: number[] = [];
+  for (let current: number | null | undefined = id; current != null; current = parents.get(current)) {
+    path.push(current);
+  }
+  return path.reverse();
 }
 
 function traversalNextIds(
@@ -467,6 +534,17 @@ function buildGraphIndex(
   }
 
   return { byId, incoming, outgoing, visibleIds };
+}
+
+function addKnownIds(
+  ids: Set<number>,
+  byId: ReadonlyMap<number, SymbolReport>,
+  extraIds: ReadonlySet<number> | undefined,
+) {
+  if (!extraIds) return;
+  for (const id of extraIds) {
+    if (byId.has(id)) ids.add(id);
+  }
 }
 
 function appendMapArray<K, V>(map: Map<K, V[]>, key: K, value: V) {

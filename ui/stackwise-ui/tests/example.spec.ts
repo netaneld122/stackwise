@@ -739,6 +739,45 @@ test("call graph node slider is the only branch limit and preserves the viewport
   await expect(page.locator(".limitBoundary")).toContainText("+4 callees");
 });
 
+test("show worst path reveals backend descendants hidden by the node limit", async ({ page }) => {
+  const symbols = [
+    symbolFixture(0, "demo::main", ["demo"], 1),
+    symbolFixture(1, "demo::hot", ["demo"], 10),
+    symbolFixture(2, "demo::hot::leaf", ["demo"], 60),
+    ...Array.from({ length: 6 }, (_, index) => symbolFixture(3 + index, `demo::side${index}`, ["demo"], 8)),
+  ];
+  symbols[0].worst_path = { bytes: 71, status: "known", path: [0, 1, 2] };
+  symbols[1].worst_path = { bytes: 70, status: "known", path: [1, 2] };
+  const edges = [
+    edgeFixture(0, 1),
+    edgeFixture(1, 2),
+    ...symbols.slice(3).map((symbol) => edgeFixture(0, symbol.id)),
+  ];
+
+  await page.route("/report.json", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(reportFixture(symbols, edges)),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Call Graph" }).click();
+  const slider = page.getByLabel("Call graph node limit");
+  await slider.fill("2");
+  await page.getByRole("button", { name: "Fit View" }).click();
+  await expect(page.locator('.symbolNode[title="demo::hot"]')).toBeVisible();
+  await expect(page.locator('.symbolNode[title="demo::hot::leaf"]')).toHaveCount(0);
+
+  await page.locator('.symbolNode[title="demo::hot"]').click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Show worst path" }).click();
+
+  await expect(page.locator(".graphFocusStatus")).toContainText("Pinned focus");
+  await expect(page.locator(".symbolNode.root")).toContainText("hot");
+  await expect(page.locator('.symbolNode[title="demo::hot::leaf"]')).toBeVisible();
+  await expect(page.locator(".symbolNode")).toHaveCount(2);
+});
+
 test("call graph node limit prunes huge graphs from the leaves and marks cut points", async ({ page }) => {
   const symbols = [
     symbolFixture(0, "demo::main", ["demo"]),

@@ -227,6 +227,10 @@ function ReportView({ report }: { report: StackwiseReport }) {
   const { rootId: graphRootId, nodeLimit, layout: graphLayout } = graphState;
   const edgeKinds = useMemo(() => new Set(graphState.edgeKinds), [graphState.edgeKinds]);
   const revealOwnerIds = useMemo(() => new Set(graphState.revealOwnerIds), [graphState.revealOwnerIds]);
+  const highlightedWorstPathIds = useMemo(
+    () => new Set(worstPathIdsForSymbol(report, graphState.highlightBranchRootId)),
+    [graphState.highlightBranchRootId, report],
+  );
   const status = (
     <AnalysisFileStatus
       reportPath={reportPath}
@@ -256,9 +260,10 @@ function ReportView({ report }: { report: StackwiseReport }) {
         rootId: effectiveGraphRoot,
         edgeKinds,
         direction: graphDirection,
+        pinnedSymbolIds: highlightedWorstPathIds,
       });
     },
-    [edgeKinds, effectiveGraphRoot, graphDirection, report, symbols, viewMode],
+    [edgeKinds, effectiveGraphRoot, graphDirection, highlightedWorstPathIds, report, symbols, viewMode],
   );
   const graphNodeLimitMax = Math.max(1, graphReachability?.reachableNodeCount ?? nodeLimit);
   const effectiveNodeLimit = clamp(nodeLimit, 1, graphNodeLimitMax);
@@ -308,10 +313,24 @@ function ReportView({ report }: { report: StackwiseReport }) {
       : [...current.revealOwnerIds, ownerId].slice(-24),
   }));
   const setGraphLayout = (layout: GraphLayout) => commitGraphNavigation((current) => ({ ...current, layout }));
-  const showWorstBranchHighlight = (symbolId: number) => commitGraphNavigation((current) => ({
-    ...current,
-    highlightBranchRootId: symbolId,
-  }));
+  const showWorstBranchHighlight = (symbolId: number) => {
+    const pathIds = worstPathIdsForSymbol(report, symbolId);
+    commitGraphNavigation((current) => {
+      const nextEdgeKinds = new Set(current.edgeKinds);
+      nextEdgeKinds.add("direct_call");
+      nextEdgeKinds.add("tail_call");
+      return {
+        ...current,
+        rootId: symbolId,
+        mode: "focus",
+        actionSymbolId: symbolId,
+        edgeKinds: orderedEdgeKinds(nextEdgeKinds),
+        nodeLimit: Math.max(current.nodeLimit, pathIds.length),
+        highlightBranchRootId: symbolId,
+        revealOwnerIds: [],
+      };
+    });
+  };
   const undoGraphNavigation = useCallback(() => setGraphHistory(undoGraphHistory), []);
   const redoGraphNavigation = useCallback(() => setGraphHistory(redoGraphHistory), []);
 
@@ -516,6 +535,7 @@ function ReportView({ report }: { report: StackwiseReport }) {
               selectedId={selectedId}
               focusSymbolId={graphState.actionSymbolId}
               highlightedWorstBranchRootId={graphState.highlightBranchRootId}
+              pinnedSymbolIds={highlightedWorstPathIds}
               revealOwnerIds={revealOwnerIds}
               onPivotSymbol={pivotToSymbol}
               onUnsetRoot={unsetGraphRoot}
@@ -686,6 +706,16 @@ function visibleDirectCallerCount(
     callers.add(edge.caller);
   }
   return callers.size;
+}
+
+function worstPathIdsForSymbol(report: StackwiseReport, symbolId: number | null): number[] {
+  if (symbolId == null) return [];
+  const knownIds = new Set(report.symbols.map((symbol) => symbol.id));
+  const symbol = report.symbols.find((symbol) => symbol.id === symbolId);
+  const pathIds = symbol?.worst_path.path.filter((id) => knownIds.has(id)) ?? [];
+  if (pathIds.length === 0) return [symbolId];
+  if (pathIds[0] === symbolId) return pathIds;
+  return [symbolId, ...pathIds.filter((id) => id !== symbolId)];
 }
 
 function initialGraphHistory(): GraphNavigationHistory {
@@ -2084,6 +2114,7 @@ function CallGraphView({
   selectedId,
   focusSymbolId,
   highlightedWorstBranchRootId,
+  pinnedSymbolIds,
   revealOwnerIds,
   onPivotSymbol,
   onUnsetRoot,
@@ -2103,6 +2134,7 @@ function CallGraphView({
   selectedId: number | null;
   focusSymbolId: number | null;
   highlightedWorstBranchRootId: number | null;
+  pinnedSymbolIds: ReadonlySet<number>;
   revealOwnerIds: ReadonlySet<number>;
   onPivotSymbol: (symbolId: number) => void;
   onUnsetRoot: () => void;
@@ -2121,8 +2153,9 @@ function CallGraphView({
         edgeKinds,
         direction,
         revealOwnerIds,
+        pinnedSymbolIds,
       }),
-    [direction, edgeKinds, nodeLimit, report, revealOwnerIds, rootId, symbols],
+    [direction, edgeKinds, nodeLimit, pinnedSymbolIds, report, revealOwnerIds, rootId, symbols],
   );
   const visibleGraph = useMemo(
     () => worstPathGraphSlice(focused.nodes, focused.edges, highlightedWorstBranchRootId),
@@ -2179,8 +2212,8 @@ function CallGraphView({
     [focused.rootId, hiddenRootCallerCount, nodes, onRevealMore, onShowCallers, onShowInTreemap, openSymbolContextMenu, setSelectedId],
   );
   const fitKey = useMemo(
-    () => `${focused.rootId}:${direction}:${highlightedWorstBranchRootId ?? "all"}:${layout}:${[...edgeKinds].sort().join(",")}:${symbols.length}`,
-    [direction, edgeKinds, focused.rootId, highlightedWorstBranchRootId, layout, symbols.length],
+    () => `${focused.rootId}:${direction}:${highlightedWorstBranchRootId ?? "all"}:${[...pinnedSymbolIds].join(",")}:${layout}:${[...edgeKinds].sort().join(",")}:${symbols.length}`,
+    [direction, edgeKinds, focused.rootId, highlightedWorstBranchRootId, layout, pinnedSymbolIds, symbols.length],
   );
   const rootFitViewOptions = useMemo<FitViewOptions<StackwiseFlowNode>>(
     () => {
@@ -3107,13 +3140,21 @@ function worstPathGraphSlice(
     return { nodes: graphNodes, edges: graphEdges };
   }
 
-  const branchSymbolIds = new Set(branchRoot.visibleWorstBranchIds);
-  const branchNodeIds = new Set([...branchSymbolIds].map(symbolNodeId));
+  const graphSymbolIds = new Set(
+    graphNodes.flatMap((node) => ("symbol" in node ? [node.symbol.id] : [])),
+  );
+  const reportPathIds = branchRoot.symbol.worst_path.path.filter((id) => graphSymbolIds.has(id));
+  const branchIds =
+    reportPathIds.length > 1
+      ? reportPathIds
+      : branchRoot.visibleWorstBranchIds.filter((id) => graphSymbolIds.has(id));
+  if (branchIds.length === 0) return { nodes: graphNodes, edges: graphEdges };
+
+  const branchSymbolIds = new Set(branchIds);
+  const branchNodeIds = new Set(branchIds.map(symbolNodeId));
   const branchEdgePairs = new Set<string>();
-  for (let index = 0; index < branchRoot.visibleWorstBranchIds.length - 1; index += 1) {
-    branchEdgePairs.add(
-      `${symbolNodeId(branchRoot.visibleWorstBranchIds[index])}->${symbolNodeId(branchRoot.visibleWorstBranchIds[index + 1])}`,
-    );
+  for (let index = 0; index < branchIds.length - 1; index += 1) {
+    branchEdgePairs.add(`${symbolNodeId(branchIds[index])}->${symbolNodeId(branchIds[index + 1])}`);
   }
 
   return {

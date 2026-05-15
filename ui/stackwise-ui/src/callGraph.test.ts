@@ -221,6 +221,34 @@ describe("call graph helpers", () => {
     expect(marker && "detail" in marker ? marker.detail : null).toBe("+3 callees");
   });
 
+  it("keeps pinned worst-path descendants through pruning", () => {
+    const symbols = [
+      symbol(0, "demo::main", 1),
+      symbol(1, "demo::hot", 10),
+      symbol(2, "demo::hot::leaf", 60),
+      symbol(3, "demo::side0", 8),
+      symbol(4, "demo::side1", 8),
+    ];
+    symbols[1].worst_path = { bytes: 70, status: "known", path: [1, 2] };
+    const report = reportWith(symbols, [
+      edge(0, 1, "direct_call"),
+      edge(1, 2, "direct_call"),
+      edge(0, 3, "direct_call"),
+      edge(0, 4, "direct_call"),
+    ]);
+
+    const graph = buildFocusedCallGraph(report, symbols, {
+      rootId: 0,
+      maxNodes: 3,
+      edgeKinds: allEdges,
+      pinnedSymbolIds: new Set([1, 2]),
+    });
+
+    expect(graph.nodes.map((node) => node.id).sort()).toEqual(["limit:callee:0", "s:0", "s:1", "s:2"]);
+    const hot = graph.nodes.find((node) => node.id === "s:1");
+    expect(hot && "visibleWorstBranchIds" in hot ? hot.visibleWorstBranchIds : null).toEqual([1, 2]);
+  });
+
   it("prioritizes the clicked reveal-more branch when extra nodes are available", () => {
     const symbols = [
       symbol(0, "demo::main", 8),
