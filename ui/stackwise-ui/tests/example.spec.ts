@@ -439,6 +439,35 @@ test("cross-navigates symbols between treemap and call graph context menus", asy
 
 test("double-click cross-navigates symbols between treemap and call graph", async ({ page }) => {
   const symbols = [
+    symbolFixture(0, "demo::main", ["demo"], 2048),
+    ...Array.from({ length: 80 }, (_, index) =>
+      symbolFixture(index + 1, `demo::leaf${index}`, ["demo"], 4),
+    ),
+  ];
+  const edges = symbols.slice(1).map((symbol) => edgeFixture(0, symbol.id));
+  await page.route("/report.json", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(reportFixture(symbols, edges)),
+    });
+  });
+
+  await page.goto("/");
+  const treemapCanvas = page.locator(".treemapShell canvas");
+  const treemapBox = await treemapCanvas.boundingBox();
+  if (!treemapBox) throw new Error("Expected treemap canvas bounds");
+  await page.mouse.dblclick(treemapBox.x + treemapBox.width * 0.5, treemapBox.y + treemapBox.height * 0.5);
+
+  await expect(page.getByRole("tab", { name: "Call Graph" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".graphFocusStatus")).toContainText("Pinned focus");
+  const selectedGraphNode = page.locator(".symbolNode.selected");
+  await expect(selectedGraphNode).toBeVisible();
+  await expect(selectedGraphNode).toContainText("main");
+  await expectSelectedGraphNodeCentered(page);
+});
+
+test("double-click cross-navigates symbols from call graph back to treemap", async ({ page }) => {
+  const symbols = [
     symbolFixture(0, "demo::main", ["demo"], 16),
     symbolFixture(1, "demo::leaf", ["demo"], 64),
   ];
@@ -450,26 +479,13 @@ test("double-click cross-navigates symbols between treemap and call graph", asyn
   });
 
   await page.goto("/");
-  const treemapCanvas = page.locator(".treemapShell canvas");
-  const treemapBox = await treemapCanvas.boundingBox();
-  if (!treemapBox) throw new Error("Expected treemap canvas bounds");
-  await page.mouse.dblclick(treemapBox.x + treemapBox.width * 0.35, treemapBox.y + treemapBox.height * 0.5);
-
-  await expect(page.getByRole("tab", { name: "Call Graph" })).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator(".graphFocusStatus")).toContainText("Pinned focus");
-  const selectedGraphNode = page.locator(".symbolNode.selected");
-  await expect(selectedGraphNode).toBeVisible();
-  await expectSelectedGraphNodeCentered(page);
-
-  const selectedGraphNodeBox = await selectedGraphNode.boundingBox();
-  if (!selectedGraphNodeBox) throw new Error("Expected selected graph node bounds");
-  await page.mouse.dblclick(
-    selectedGraphNodeBox.x + selectedGraphNodeBox.width / 2,
-    selectedGraphNodeBox.y + selectedGraphNodeBox.height / 2,
-  );
+  await page.getByRole("tab", { name: "Call Graph" }).click();
+  const graphNode = page.locator(".symbolNode").filter({ hasText: "demo::leaf" });
+  await expect(graphNode).toBeVisible();
+  await graphNode.dblclick();
 
   await expect(page.getByRole("tab", { name: "Stack Treemap" })).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator(".detailCard")).toContainText(/demo::(?:main|leaf)/);
+  await expect(page.locator(".detailCard")).toContainText("demo::leaf");
 });
 
 test("renders call graph minimap nodes for larger reports", async ({ page }) => {

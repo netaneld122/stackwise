@@ -30,6 +30,7 @@ import {
   type FitViewOptions,
   type Node as FlowNode,
   type NodeProps,
+  useNodesInitialized,
   useReactFlow,
   useViewport,
 } from "@xyflow/react";
@@ -2236,7 +2237,7 @@ function CallGraphView({
         edges={edges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        fitView
+        fitView={focusSymbolId == null}
         fitViewOptions={rootFitViewOptions}
         minZoom={0.2}
         maxZoom={1.6}
@@ -2504,30 +2505,73 @@ function GraphTargetFocus({
   symbolId: number | null;
 }) {
   const flow = useReactFlow<StackwiseFlowNode, StackwiseFlowEdge>();
+  const nodesInitialized = useNodesInitialized();
   const appliedFocusRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (symbolId == null) return;
-    const targetNode = nodes.find((node) => node.id === symbolNodeId(symbolId));
-    if (!targetNode) return;
-    const width = targetNode.width ?? targetNode.measured?.width ?? 278;
-    const height = targetNode.height ?? targetNode.measured?.height ?? 142;
-    const centerX = targetNode.position.x + width / 2;
-    const centerY = targetNode.position.y + height / 2;
+    if (symbolId == null || !nodesInitialized) return;
+    const targetNodeId = symbolNodeId(symbolId);
+    const center = graphTargetNodeCenter(nodes, targetNodeId);
+    if (!center) return;
+    const { centerX, centerY } = center;
     const nextFocusKey = `${focusKey}:${symbolId}:${Math.round(centerX)}:${Math.round(centerY)}`;
-    if (appliedFocusRef.current === nextFocusKey) return;
+    if (appliedFocusRef.current === nextFocusKey && isGraphNodeScreenCentered(targetNodeId)) return;
     appliedFocusRef.current = nextFocusKey;
 
-    const timeout = window.setTimeout(() => {
+    let cancelled = false;
+    const timeouts: number[] = [];
+    const frames: number[] = [];
+    const focusTarget = (attempt: number) => {
+      if (cancelled) return;
+      if (attempt > 0 && isGraphNodeScreenCentered(targetNodeId)) return;
       void flow.setCenter(centerX, centerY, {
         duration: 0,
-        zoom: 1.22,
+        zoom: GRAPH_TARGET_FOCUS_ZOOM,
       });
-    }, 60);
-    return () => window.clearTimeout(timeout);
-  }, [flow, focusKey, nodes, symbolId]);
+      if (attempt >= GRAPH_TARGET_FOCUS_RETRY_DELAYS_MS.length) return;
+      timeouts.push(window.setTimeout(() => focusTarget(attempt + 1), GRAPH_TARGET_FOCUS_RETRY_DELAYS_MS[attempt]));
+    };
+
+    frames.push(window.requestAnimationFrame(() => {
+      frames.push(window.requestAnimationFrame(() => focusTarget(0)));
+    }));
+    return () => {
+      cancelled = true;
+      for (const timeout of timeouts) window.clearTimeout(timeout);
+      for (const frame of frames) window.cancelAnimationFrame(frame);
+    };
+  }, [flow, focusKey, nodes, nodesInitialized, symbolId]);
 
   return null;
+}
+
+const GRAPH_TARGET_FOCUS_ZOOM = 1.22;
+const GRAPH_TARGET_FOCUS_RETRY_DELAYS_MS = [50, 140, 280] as const;
+const GRAPH_TARGET_CENTER_TOLERANCE_PX = 2;
+
+function graphTargetNodeCenter(nodes: StackwiseFlowNode[], nodeId: string): { centerX: number; centerY: number } | null {
+  const targetNode = nodes.find((node) => node.id === nodeId);
+  if (!targetNode) return null;
+  const width = targetNode.width ?? targetNode.measured?.width ?? 278;
+  const height = targetNode.height ?? targetNode.measured?.height ?? 142;
+  return {
+    centerX: targetNode.position.x + width / 2,
+    centerY: targetNode.position.y + height / 2,
+  };
+}
+
+function isGraphNodeScreenCentered(nodeId: string): boolean {
+  const flowElement = document.querySelector<HTMLElement>(".graphShell .react-flow");
+  const nodeElement = document.querySelector<HTMLElement>(`.graphShell .react-flow__node[data-id="${cssAttrValue(nodeId)}"]`);
+  const flowRect = flowElement?.getBoundingClientRect();
+  const nodeRect = nodeElement?.getBoundingClientRect();
+  if (!flowRect || !nodeRect || flowRect.width <= 0 || flowRect.height <= 0) return false;
+
+  const nodeCenterX = nodeRect.left + nodeRect.width / 2;
+  const nodeCenterY = nodeRect.top + nodeRect.height / 2;
+  const flowCenterX = flowRect.left + flowRect.width / 2;
+  const flowCenterY = flowRect.top + flowRect.height / 2;
+  return Math.max(Math.abs(nodeCenterX - flowCenterX), Math.abs(nodeCenterY - flowCenterY)) <= GRAPH_TARGET_CENTER_TOLERANCE_PX;
 }
 
 function TightMiniMap({
