@@ -464,6 +464,32 @@ test("call graph selection does not promote React Flow root selection", async ({
   await expect(page.locator(".react-flow__node.selected")).toHaveCount(0);
 });
 
+test("call graph search uses visible matches instead of forcing the default root", async ({ page }) => {
+  const symbols = [
+    symbolFixture(0, "demo::main", ["demo"], 16),
+    symbolFixture(1, "demo::branch17::worker_005", ["demo", "branch17"], 27),
+    symbolFixture(2, "demo::branch18::worker_000", ["demo", "branch18"], 162),
+  ];
+  await page.route("/report.json", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(reportFixture(symbols, [edgeFixture(0, 1), edgeFixture(0, 2)])),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("tab", { name: "Call Graph" }).click();
+  await page.locator('.symbolNode[title="demo::branch17::worker_005"]').click();
+  await expect(page.locator(".detailCard")).toContainText("demo::branch17::worker_005");
+
+  await page.getByPlaceholder("Symbol, crate, module").fill("branch18::worker_000");
+
+  await expect(page.locator(".symbolNode.root")).toHaveAttribute("title", "demo::branch18::worker_000");
+  await expect(page.locator('.symbolNode[title="demo::main"]')).toHaveCount(0);
+  await expect(page.locator(".detailCard")).toHaveCount(0);
+  await expect(page.getByText("Select a rectangle.")).toBeVisible();
+});
+
 test("double-click cross-navigates symbols between treemap and call graph", async ({ page }) => {
   const symbols = [
     symbolFixture(0, "demo::main", ["demo"], 2048),

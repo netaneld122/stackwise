@@ -21,7 +21,7 @@ describe("call graph helpers", () => {
 
     expect(chooseDefaultRoot(report, report.symbols, 0)).toBe(0);
     expect(chooseDefaultRoot(report, report.symbols, 1)).toBe(0);
-    expect(chooseDefaultRoot(report, [report.symbols[1]], null)).toBe(0);
+    expect(chooseDefaultRoot(report, [report.symbols[1]], null)).toBe(1);
   });
 
   it("builds the full callee graph from the root by default", () => {

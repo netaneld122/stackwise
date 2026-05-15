@@ -218,8 +218,10 @@ function ReportView({ report }: { report: StackwiseReport }) {
       ),
     [report.symbols, query, measurementFilter, includedSymbolIds],
   );
-  const selected = selectedSymbol();
   const visibleSymbolIds = useMemo(() => new Set(symbols.map((symbol) => symbol.id)), [symbols]);
+  const selected = selectedId == null || visibleSymbolIds.has(selectedId)
+    ? selectedSymbol()
+    : null;
   const [graphHistory, setGraphHistory] = useState<GraphNavigationHistory>(() => initialGraphHistory());
   const graphState = graphHistory.present;
   const canUndoGraphNavigation = graphHistory.past.length > 0;

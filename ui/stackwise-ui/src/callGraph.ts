@@ -99,7 +99,7 @@ export function chooseDefaultRoot(
   const visibleIds = new Set(visibleSymbols.map((symbol) => symbol.id));
 
   const entryPoint = choosePrimaryEntryPoint(report);
-  if (entryPoint != null) return entryPoint;
+  if (entryPoint != null && visibleIds.has(entryPoint)) return entryPoint;
 
   if (selectedId != null && visibleIds.has(selectedId)) return selectedId;
 
