@@ -2,6 +2,13 @@
 
 All notable changes to Stackwise will be documented in this file.
 
+## 0.3.0 - 2026-05-15
+
+- Optimized large treemap and call graph interactions, including treemap hit testing, call graph pruning, reachability counts, and graph layout label placement.
+- Improved call graph navigation with stronger root/minimap cues, exact symbol focus centering, Ctrl+Z/Ctrl+Shift+Z undo/redo, and a hidden-caller hint for roots with callers outside the current view.
+- Added a clear source/disassembly fallback message when a symbol context response is empty.
+- Expanded regression coverage for large graphs, treemap scaling, minimap root markers, hidden caller reveal behavior, and cross-view centering.
+
 ## 0.2.0 - 2026-05-09
 
 - Added direct artifact UI serving with `stackwise analyze <artifact> --open` and `--serve`.

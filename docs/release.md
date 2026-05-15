@@ -2,6 +2,8 @@
 
 Stackwise publishes two crates. Publish `stackwise-core` first, wait for the crates.io index to update, then publish `stackwise`.
 
+Current intended release: `v0.3.0`.
+
 Codex must never run a real publish command. Use dry-runs only:
 
 ```powershell
@@ -40,7 +42,7 @@ Run these manually only when intentionally releasing:
 cargo publish -p stackwise-core
 # wait for crates.io index propagation
 cargo publish -p stackwise
-git tag v0.2.0
+git tag v0.3.0
 git push origin main --tags
 ```
 
