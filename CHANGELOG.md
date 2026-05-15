@@ -2,6 +2,12 @@
 
 All notable changes to Stackwise will be documented in this file.
 
+## 0.3.1 - 2026-05-16
+
+- Fixed "Show worst path" so backend-reported worst-path descendants stay visible even when the call graph node limit would otherwise prune them.
+- Fixed call graph node selection so selecting different nodes no longer promotes React Flow's internal root selection state.
+- Fixed call graph search filtering so the default root and details panel stay aligned with the visible filtered symbols.
+
 ## 0.3.0 - 2026-05-15
 
 - Optimized large treemap and call graph interactions, including treemap hit testing, call graph pruning, reachability counts, and graph layout label placement.
