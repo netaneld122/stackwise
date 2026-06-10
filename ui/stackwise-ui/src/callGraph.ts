@@ -137,7 +137,8 @@ export function countReachableCallGraphSymbols(
   visibleIds.add(rootId);
   const index = buildGraphIndex(report, visibleIds, allSymbolsById);
   let reachableNodeCount = 1;
-  walkReachable(rootId, options.direction ?? "callees", index, options.edgeKinds, () => {
+  walkReachable(rootId, options.direction ?? "callees", index, options.edgeKinds, (edge, id) => {
+    if (edge.callee == null || !index.visibleIds.has(id)) return false;
     reachableNodeCount += 1;
     return true;
   });
