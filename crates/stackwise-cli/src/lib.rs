@@ -315,11 +315,16 @@ mod tests {
 
     #[test]
     fn default_artifact_report_path_falls_back_for_empty_stem() {
-        let artifact = Utf8Path::new(r"C:\tmp\");
+        // Backslashes are only path separators on Windows; std joins with
+        // the platform separator, so each platform needs its own fixture.
+        #[cfg(windows)]
+        let (artifact, expected) = (r"C:\tmp\", r"C:\tmp\report.stackwise.json");
+        #[cfg(not(windows))]
+        let (artifact, expected) = ("/tmp/", "/tmp/report.stackwise.json");
 
         assert_eq!(
-            default_artifact_report_path(artifact).as_str(),
-            r"C:\tmp\report.stackwise.json"
+            default_artifact_report_path(Utf8Path::new(artifact)).as_str(),
+            expected
         );
     }
 }
