@@ -693,38 +693,44 @@ function computeVisibleWorstStacks(
     appendMapArray(outgoing, caller, { callee, kind: edge.kind });
   }
 
-  const memo = new Map<number, { bytes: number | null; status: GraphStackStatus; path: number[] }>();
+  type WorstStack = { bytes: number | null; status: GraphStackStatus; path: number[] };
+  const memo = new Map<number, WorstStack>();
   const visiting = new Set<number>();
-  const visit = (id: number): { bytes: number | null; status: GraphStackStatus; path: number[] } => {
+  const visit = (id: number): { result: WorstStack; truncated: boolean } => {
     const memoized = memo.get(id);
-    if (memoized) return memoized;
+    if (memoized) return { result: memoized, truncated: false };
 
     const symbol = index.byId.get(id);
-    if (!symbol) return { bytes: 0, status: "known", path: [id] };
+    if (!symbol) return { result: { bytes: 0, status: "known", path: [id] }, truncated: false };
     const own = ownStack(symbol).bytes ?? 0;
-    if (visiting.has(id)) return { bytes: own, status: "known", path: [id] };
+    if (visiting.has(id)) return { result: { bytes: own, status: "known", path: [id] }, truncated: true };
 
     visiting.add(id);
+    let truncated = false;
     let best = own;
     let bestPath = [id];
     for (const edge of outgoing.get(id) ?? []) {
       const calleeWorst = visit(edge.callee);
-      const calleeBytes = calleeWorst.bytes ?? 0;
+      truncated ||= calleeWorst.truncated;
+      const calleeBytes = calleeWorst.result.bytes ?? 0;
       const candidate = edge.kind === "tail_call" ? Math.max(own, calleeBytes) : own + calleeBytes;
       if (candidate > best) {
         best = candidate;
-        bestPath = [id, ...calleeWorst.path.filter((pathId) => pathId !== id)];
+        bestPath = [id, ...calleeWorst.result.path.filter((pathId) => pathId !== id)];
       }
     }
     visiting.delete(id);
 
     const result = { bytes: best, status: "known" as GraphStackStatus, path: bestPath };
-    memo.set(id, result);
-    return result;
+    // A result truncated by a node on the active path is only valid for
+    // this traversal; caching it would understate other nodes' branches.
+    if (!truncated) memo.set(id, result);
+    return { result, truncated };
   };
 
-  for (const id of nodeIds) visit(id);
-  return memo;
+  const worstById = new Map<number, WorstStack>();
+  for (const id of nodeIds) worstById.set(id, visit(id).result);
+  return worstById;
 }
 
 function withStackDelta(
