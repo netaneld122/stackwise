@@ -714,7 +714,9 @@ fn percent_decode(value: &str) -> String {
     let mut index = 0;
     while index < input.len() {
         if input[index] == b'%' && index + 2 < input.len() {
-            if let Ok(hex) = u8::from_str_radix(&value[index + 1..index + 3], 16) {
+            // Decode from the raw bytes; slicing the str here can panic on
+            // a UTF-8 char boundary when the escape is malformed.
+            if let Some(hex) = decode_hex_pair(input[index + 1], input[index + 2]) {
                 bytes.push(hex);
                 index += 3;
                 continue;
@@ -728,6 +730,12 @@ fn percent_decode(value: &str) -> String {
         index += 1;
     }
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn decode_hex_pair(high: u8, low: u8) -> Option<u8> {
+    let high = (high as char).to_digit(16)?;
+    let low = (low as char).to_digit(16)?;
+    Some((high * 16 + low) as u8)
 }
 
 fn build_agent_handoff_context(
@@ -2047,11 +2055,23 @@ mod tests {
     };
     #[cfg(unix)]
     use super::read_agent_status;
+    use super::percent_decode;
     use std::fs;
     use std::path::{Path, PathBuf};
     #[cfg(any(unix, windows))]
     use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn percent_decode_handles_malformed_escapes_and_multibyte_input() {
+        assert_eq!(percent_decode("a%20b+c"), "a b c");
+        assert_eq!(percent_decode("%41"), "A");
+        assert_eq!(percent_decode("100%"), "100%");
+        // A malformed escape followed by a multi-byte character used to
+        // panic on a char-boundary str slice.
+        assert_eq!(percent_decode("%aé"), "%aé");
+        assert_eq!(percent_decode("%é"), "%é");
+    }
 
     #[test]
     fn detects_mixed_separator_rustc_library_paths() {
