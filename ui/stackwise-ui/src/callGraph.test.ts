@@ -160,6 +160,28 @@ describe("call graph helpers", () => {
     expect(b && "cumulativeStackBytes" in b ? b.cumulativeStackBytes : null).toBe(112);
   });
 
+  it("reports worst branches around cycles without caching truncated results", () => {
+    const symbols = [symbol(0, "demo::a", 10), symbol(1, "demo::b", 10), symbol(2, "demo::c", 100)];
+    const report = reportWith(symbols, [
+      edge(0, 1, "direct_call"),
+      edge(1, 0, "direct_call"),
+      edge(0, 2, "direct_call"),
+    ]);
+
+    const graph = buildFocusedCallGraph(report, symbols, {
+      rootId: 0,
+      maxNodes: 20,
+      edgeKinds: allEdges,
+    });
+
+    const a = graph.nodes.find((node) => node.id === "s:0");
+    const b = graph.nodes.find((node) => node.id === "s:1");
+    expect(a && "visibleWorstStackBytes" in a ? a.visibleWorstStackBytes : null).toBe(110);
+    expect(a && "visibleWorstBranchIds" in a ? a.visibleWorstBranchIds : null).toEqual([0, 2]);
+    expect(b && "visibleWorstStackBytes" in b ? b.visibleWorstStackBytes : null).toBe(120);
+    expect(b && "visibleWorstBranchIds" in b ? b.visibleWorstBranchIds : null).toEqual([1, 0, 2]);
+  });
+
   it("counts unmeasured frames as zero in cumulative graph totals", () => {
     const symbols = [symbol(0, "demo::main", 16), symbol(1, "demo::unmeasured", null), symbol(2, "demo::leaf", 64)];
     const report = reportWith(symbols, [edge(0, 1, "direct_call"), edge(1, 2, "tail_call")]);
