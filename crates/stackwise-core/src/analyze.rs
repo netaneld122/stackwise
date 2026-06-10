@@ -333,8 +333,12 @@ fn collect_edges(file: &object::File<'_>, symbols: &[SymbolReport]) -> Vec<EdgeR
         let Some(bytes) = symbol_bytes(symbol.address, size, &executable_sections) else {
             continue;
         };
+        let body_end = symbol.address.saturating_add(size);
 
         for call in scan_x86_direct_calls(symbol.address, bytes) {
+            if is_intra_symbol_branch(call.target, symbol.address, body_end) {
+                continue;
+            }
             let callee = resolve_symbol(call.target, &ranges);
             let kind = match (call.kind, callee) {
                 (ScannedEdgeKind::Call, Some(_)) => EdgeKind::DirectCall,
@@ -408,6 +412,14 @@ fn scan_x86_direct_calls(base: u64, bytes: &[u8]) -> Vec<ScannedEdge> {
     }
 
     edges
+}
+
+/// A branch back into the symbol's own body (anywhere past the entry point)
+/// is intra-function control flow, not a call edge; treating it as a tail
+/// call would falsely mark the function recursive. A real self call or self
+/// tail call targets the entry address and is kept.
+fn is_intra_symbol_branch(target: Option<u64>, start: u64, end: u64) -> bool {
+    target.is_some_and(|target| target > start && target < end)
 }
 
 fn resolve_symbol(address: Option<u64>, ranges: &[(u64, u64, u32)]) -> Option<u32> {
@@ -593,6 +605,37 @@ enum ScannedEdgeKind {
     Call,
     Jump,
     IndirectCall,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_intra_symbol_branch, scan_x86_direct_calls};
+
+    #[test]
+    fn intra_function_jumps_are_filtered_but_outward_calls_are_kept() {
+        let bytes = [
+            0xe9, 0x05, 0x00, 0x00, 0x00, // jmp rel32 -> base + 10 (inside the body)
+            0xe8, 0xf6, 0x00, 0x00, 0x00, // call rel32 -> base + 0x100 (outside the body)
+            0x90, 0x90,
+        ];
+        let base = 0x1000u64;
+        let end = base + bytes.len() as u64;
+
+        let flagged = scan_x86_direct_calls(base, &bytes)
+            .iter()
+            .map(|edge| (edge.target, is_intra_symbol_branch(edge.target, base, end)))
+            .collect::<Vec<_>>();
+
+        assert_eq!(flagged, [(Some(0x100a), true), (Some(0x1100), false)]);
+    }
+
+    #[test]
+    fn branches_to_the_entry_or_outside_the_body_are_not_intra_symbol() {
+        assert!(!is_intra_symbol_branch(Some(0x1000), 0x1000, 0x1010));
+        assert!(is_intra_symbol_branch(Some(0x1001), 0x1000, 0x1010));
+        assert!(!is_intra_symbol_branch(Some(0x1010), 0x1000, 0x1010));
+        assert!(!is_intra_symbol_branch(None, 0x1000, 0x1010));
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

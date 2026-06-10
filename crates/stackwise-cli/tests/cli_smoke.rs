@@ -240,6 +240,26 @@ fn complex_tree_fixture_extracts_large_direct_call_graph() {
         "stackwise_complex_tree::generated::node_4_255",
         "stackwise_complex_tree::generated::node_5_1023",
     ));
+
+    let address_by_id = report
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.id, symbol.address))
+        .collect::<HashMap<_, _>>();
+    let intra_function_self_edges = report
+        .edges
+        .iter()
+        .filter(|edge| {
+            edge.callee == Some(edge.caller)
+                && edge
+                    .target_address
+                    .is_some_and(|target| address_by_id.get(&edge.caller) != Some(&target))
+        })
+        .count();
+    assert_eq!(
+        intra_function_self_edges, 0,
+        "intra-function branches must not be reported as self call edges"
+    );
 }
 
 fn simple_std_artifact() -> Option<Utf8PathBuf> {
