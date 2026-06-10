@@ -122,6 +122,44 @@ describe("call graph helpers", () => {
     expect(graph.edges[0].addedStackBytes).toBe(32);
   });
 
+  it("accumulates the deepest chain through converging call paths", () => {
+    const symbols = [symbol(0, "demo::main", 16), symbol(1, "demo::a", 32), symbol(2, "demo::b", 64)];
+    const report = reportWith(symbols, [
+      edge(0, 1, "direct_call"),
+      edge(0, 2, "direct_call"),
+      edge(1, 2, "direct_call"),
+    ]);
+
+    const graph = buildFocusedCallGraph(report, symbols, {
+      rootId: 0,
+      maxNodes: 20,
+      edgeKinds: allEdges,
+    });
+
+    const b = graph.nodes.find((node) => node.id === "s:2");
+    expect(b && "cumulativeStackBytes" in b ? b.cumulativeStackBytes : null).toBe(112);
+  });
+
+  it("keeps cumulative stacks finite when the graph contains a cycle", () => {
+    const symbols = [symbol(0, "demo::main", 16), symbol(1, "demo::a", 32), symbol(2, "demo::b", 64)];
+    const report = reportWith(symbols, [
+      edge(0, 1, "direct_call"),
+      edge(1, 2, "direct_call"),
+      edge(2, 1, "direct_call"),
+    ]);
+
+    const graph = buildFocusedCallGraph(report, symbols, {
+      rootId: 0,
+      maxNodes: 20,
+      edgeKinds: allEdges,
+    });
+
+    const a = graph.nodes.find((node) => node.id === "s:1");
+    const b = graph.nodes.find((node) => node.id === "s:2");
+    expect(a && "cumulativeStackBytes" in a ? a.cumulativeStackBytes : null).toBe(48);
+    expect(b && "cumulativeStackBytes" in b ? b.cumulativeStackBytes : null).toBe(112);
+  });
+
   it("counts unmeasured frames as zero in cumulative graph totals", () => {
     const symbols = [symbol(0, "demo::main", 16), symbol(1, "demo::unmeasured", null), symbol(2, "demo::leaf", 64)];
     const report = reportWith(symbols, [edge(0, 1, "direct_call"), edge(1, 2, "tail_call")]);

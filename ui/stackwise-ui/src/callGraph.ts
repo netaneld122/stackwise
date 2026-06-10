@@ -204,7 +204,7 @@ export function buildFocusedCallGraph(
     options.revealOwnerIds ?? new Set(),
     options.pinnedSymbolIds ?? new Set(),
   );
-  const stackById = computeCumulativeStacks(rootId, nodeIds, relationById, depthById, index, options.edgeKinds);
+  const stackById = computeCumulativeStacks(rootId, nodeIds, relationById, index, options.edgeKinds);
   const nodes: GraphNode[] = [...nodeIds].map((id) => {
     const symbol = index.byId.get(id)!;
     const stack = stackById.get(id) ?? { bytes: 0, status: "known" as GraphStackStatus };
@@ -580,7 +580,6 @@ function computeCumulativeStacks(
   rootId: number,
   nodeIds: ReadonlySet<number>,
   relationById: ReadonlyMap<number, GraphRelation>,
-  depthById: ReadonlyMap<number, number>,
   index: GraphIndex,
   edgeKinds: ReadonlySet<EdgeKind>,
 ) {
@@ -589,21 +588,54 @@ function computeCumulativeStacks(
   if (!root) return stackById;
   stackById.set(rootId, ownStack(root));
 
-  const orderedIds = [...nodeIds].sort((left, right) => (depthById.get(left) ?? 0) - (depthById.get(right) ?? 0));
-  for (const id of orderedIds) {
-    if (relationById.get(id) === "caller") continue;
+  const outEdges = (id: number) =>
+    (index.outgoing.get(id) ?? []).filter(
+      (edge) =>
+        edgeKinds.has(edge.kind) &&
+        edge.callee != null &&
+        nodeIds.has(edge.callee) &&
+        relationById.get(edge.callee) !== "caller",
+    );
+
+  // Order the callee subgraph topologically with a DFS, ignoring only the
+  // edges that close a cycle on the active path. Relaxing edges in that
+  // order propagates the maximum along converging branches; the previous
+  // BFS-depth guard also dropped acyclic edges between same-depth nodes.
+  const order: number[] = [];
+  const state = new Map<number, "active" | "done">();
+  const backEdges = new Set<EdgeReport>();
+  const stack = [{ id: rootId, edges: outEdges(rootId), next: 0 }];
+  state.set(rootId, "active");
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1];
+    if (frame.next < frame.edges.length) {
+      const edge = frame.edges[frame.next];
+      frame.next += 1;
+      const callee = edge.callee!;
+      const calleeState = state.get(callee);
+      if (calleeState === "active") backEdges.add(edge);
+      else if (calleeState == null) {
+        state.set(callee, "active");
+        stack.push({ id: callee, edges: outEdges(callee), next: 0 });
+      }
+    } else {
+      state.set(frame.id, "done");
+      order.push(frame.id);
+      stack.pop();
+    }
+  }
+  order.reverse();
+
+  for (const id of order) {
     const current = stackById.get(id);
-    if (!current) continue;
+    const caller = index.byId.get(id);
+    if (!current || !caller) continue;
 
-    for (const edge of index.outgoing.get(id) ?? []) {
-      if (!edgeKinds.has(edge.kind) || edge.callee == null || !nodeIds.has(edge.callee)) continue;
-      if (relationById.get(edge.callee) === "caller") continue;
-      if ((depthById.get(edge.callee) ?? 0) <= (depthById.get(id) ?? 0)) continue;
-
-      const caller = index.byId.get(id);
-      const callee = index.byId.get(edge.callee);
-      if (!caller || !callee) continue;
-      updateStack(stackById, edge.callee, combineStacks(current, ownStack(caller), ownStack(callee), edge.kind));
+    for (const edge of outEdges(id)) {
+      if (backEdges.has(edge)) continue;
+      const callee = index.byId.get(edge.callee!);
+      if (!callee) continue;
+      updateStack(stackById, edge.callee!, combineStacks(current, ownStack(caller), ownStack(callee), edge.kind));
     }
   }
 
