@@ -418,6 +418,29 @@ describe("call graph helpers", () => {
     expect(reachability.reachableNodeCount).toBe(symbols.length);
   });
 
+  it("counts only symbols the focused graph can actually show", () => {
+    const symbols = [
+      symbol(0, "demo::main", 16),
+      symbol(1, "std::a", 8, "std"),
+      symbol(2, "std::b", 8, "std"),
+    ];
+    const report = reportWith(symbols, [edge(0, 1, "direct_call"), edge(1, 2, "direct_call")]);
+    const visibleSymbols = [symbols[0]];
+
+    const reachability = countReachableCallGraphSymbols(report, visibleSymbols, {
+      rootId: 0,
+      edgeKinds: allEdges,
+    });
+    const graph = buildFocusedCallGraph(report, visibleSymbols, {
+      rootId: 0,
+      maxNodes: 20,
+      edgeKinds: allEdges,
+    });
+
+    expect(reachability.reachableNodeCount).toBe(graph.reachableNodeCount);
+    expect(reachability.reachableNodeCount).toBe(1);
+  });
+
   it("prunes long chains without recursive hidden-count overflow", () => {
     const symbols = Array.from({ length: 6000 }, (_, id) => symbol(id, id === 0 ? "demo::main" : `demo::f${id}`, 8));
     const report = reportWith(symbols, symbols.slice(0, -1).map((source) => edge(source.id, source.id + 1, "direct_call")));
