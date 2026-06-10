@@ -1008,7 +1008,10 @@ fn write_agent_status(path: &Path, status: &AgentHandoffStatus) -> anyhow::Resul
 
 fn read_agent_status(path: &Path) -> std::io::Result<AgentHandoffStatus> {
     let data = fs::read(path)?;
-    serde_json::from_slice(&data)
+    // `tail -c` in the handoff script can split a multi-byte character, so
+    // decode the status file leniently instead of rejecting it outright.
+    let text = String::from_utf8_lossy(&data);
+    serde_json::from_str(&text)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
 }
 
@@ -1322,7 +1325,7 @@ fn write_agent_script(config: AgentScriptConfig<'_>) -> anyhow::Result<()> {
     #[cfg(not(windows))]
     {
         let script = format!(
-            "#!/usr/bin/env sh\ncd {}\nSTACKWISE_HANDOFF_ID={}\nSTACKWISE_AGENT={}\nSTACKWISE_PROMPT_FILE={}\nSTACKWISE_CONTEXT_FILE={}\nSTACKWISE_SCRIPT_FILE={}\nSTACKWISE_STATUS_FILE={}\nSTACKWISE_LOG_FILE={}\nexport STACKWISE_HANDOFF_ID STACKWISE_AGENT STACKWISE_PROMPT_FILE STACKWISE_CONTEXT_FILE STACKWISE_SCRIPT_FILE STACKWISE_STATUS_FILE STACKWISE_LOG_FILE\nprintf '%s\\n' {}\nprintf 'Output is streamed live and saved to %s.\\n' \"$STACKWISE_LOG_FILE\"\nprintf '{{\"id\":\"%s\",\"agent\":\"%s\",\"state\":\"running\",\"exit_code\":null,\"message\":\"%s is running.\",\"log_tail\":null,\"prompt_path\":\"%s\",\"context_path\":\"%s\",\"script_path\":\"%s\",\"log_path\":\"%s\",\"updated_at\":0}}\\n' \"$STACKWISE_HANDOFF_ID\" \"$STACKWISE_AGENT\" \"$STACKWISE_AGENT\" \"$STACKWISE_PROMPT_FILE\" \"$STACKWISE_CONTEXT_FILE\" \"$STACKWISE_SCRIPT_FILE\" \"$STACKWISE_LOG_FILE\" > \"$STACKWISE_STATUS_FILE\"\nSTACKWISE_EXIT_FILE=\"$STACKWISE_LOG_FILE.exit\"\nrm -f \"$STACKWISE_LOG_FILE\" \"$STACKWISE_EXIT_FILE\"\n( {} ; printf '%s' \"$?\" > \"$STACKWISE_EXIT_FILE\" ) 2>&1 | tee \"$STACKWISE_LOG_FILE\"\nSTACKWISE_EXIT_CODE=$(cat \"$STACKWISE_EXIT_FILE\" 2>/dev/null || printf '1')\nrm -f \"$STACKWISE_EXIT_FILE\"\nif [ \"$STACKWISE_EXIT_CODE\" -eq 0 ]; then STACKWISE_STATE=succeeded; STACKWISE_MESSAGE=\"$STACKWISE_AGENT finished successfully.\"; else STACKWISE_STATE=failed; STACKWISE_MESSAGE=\"$STACKWISE_AGENT exited with code $STACKWISE_EXIT_CODE. See the handoff log.\"; fi\nSTACKWISE_LOG_TAIL=$(tail -c 4000 \"$STACKWISE_LOG_FILE\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g')\nprintf '{{\"id\":\"%s\",\"agent\":\"%s\",\"state\":\"%s\",\"exit_code\":%s,\"message\":\"%s\",\"log_tail\":\"%s\",\"prompt_path\":\"%s\",\"context_path\":\"%s\",\"script_path\":\"%s\",\"log_path\":\"%s\",\"updated_at\":0}}\\n' \"$STACKWISE_HANDOFF_ID\" \"$STACKWISE_AGENT\" \"$STACKWISE_STATE\" \"$STACKWISE_EXIT_CODE\" \"$STACKWISE_MESSAGE\" \"$STACKWISE_LOG_TAIL\" \"$STACKWISE_PROMPT_FILE\" \"$STACKWISE_CONTEXT_FILE\" \"$STACKWISE_SCRIPT_FILE\" \"$STACKWISE_LOG_FILE\" > \"$STACKWISE_STATUS_FILE\"\nprintf '\\nAgent exited with %s.\\n' \"$STACKWISE_EXIT_CODE\"\nif [ -t 0 ]; then printf 'Press Enter to close this Stackwise agent shell...'; read _; fi\n",
+            "#!/usr/bin/env sh\ncd {}\nSTACKWISE_HANDOFF_ID={}\nSTACKWISE_AGENT={}\nSTACKWISE_PROMPT_FILE={}\nSTACKWISE_CONTEXT_FILE={}\nSTACKWISE_SCRIPT_FILE={}\nSTACKWISE_STATUS_FILE={}\nSTACKWISE_LOG_FILE={}\nexport STACKWISE_HANDOFF_ID STACKWISE_AGENT STACKWISE_PROMPT_FILE STACKWISE_CONTEXT_FILE STACKWISE_SCRIPT_FILE STACKWISE_STATUS_FILE STACKWISE_LOG_FILE\nprintf '%s\\n' {}\nprintf 'Output is streamed live and saved to %s.\\n' \"$STACKWISE_LOG_FILE\"\nprintf '{{\"id\":\"%s\",\"agent\":\"%s\",\"state\":\"running\",\"exit_code\":null,\"message\":\"%s is running.\",\"log_tail\":null,\"prompt_path\":\"%s\",\"context_path\":\"%s\",\"script_path\":\"%s\",\"log_path\":\"%s\",\"updated_at\":0}}\\n' \"$STACKWISE_HANDOFF_ID\" \"$STACKWISE_AGENT\" \"$STACKWISE_AGENT\" \"$STACKWISE_PROMPT_FILE\" \"$STACKWISE_CONTEXT_FILE\" \"$STACKWISE_SCRIPT_FILE\" \"$STACKWISE_LOG_FILE\" > \"$STACKWISE_STATUS_FILE\"\nSTACKWISE_EXIT_FILE=\"$STACKWISE_LOG_FILE.exit\"\nrm -f \"$STACKWISE_LOG_FILE\" \"$STACKWISE_EXIT_FILE\"\n( {} ; printf '%s' \"$?\" > \"$STACKWISE_EXIT_FILE\" ) 2>&1 | tee \"$STACKWISE_LOG_FILE\"\nSTACKWISE_EXIT_CODE=$(cat \"$STACKWISE_EXIT_FILE\" 2>/dev/null || printf '1')\nrm -f \"$STACKWISE_EXIT_FILE\"\nif [ \"$STACKWISE_EXIT_CODE\" -eq 0 ]; then STACKWISE_STATE=succeeded; STACKWISE_MESSAGE=\"$STACKWISE_AGENT finished successfully.\"; else STACKWISE_STATE=failed; STACKWISE_MESSAGE=\"$STACKWISE_AGENT exited with code $STACKWISE_EXIT_CODE. See the handoff log.\"; fi\nSTACKWISE_LOG_TAIL=$(tail -c 4000 \"$STACKWISE_LOG_FILE\" | LC_ALL=C tr '\\t' ' ' | LC_ALL=C tr -d '\\000-\\010\\013-\\037\\177' | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g' | awk 'NR > 1 {{ printf \"%s\", \"\\\\n\" }} {{ printf \"%s\", $0 }}')\nprintf '{{\"id\":\"%s\",\"agent\":\"%s\",\"state\":\"%s\",\"exit_code\":%s,\"message\":\"%s\",\"log_tail\":\"%s\",\"prompt_path\":\"%s\",\"context_path\":\"%s\",\"script_path\":\"%s\",\"log_path\":\"%s\",\"updated_at\":0}}\\n' \"$STACKWISE_HANDOFF_ID\" \"$STACKWISE_AGENT\" \"$STACKWISE_STATE\" \"$STACKWISE_EXIT_CODE\" \"$STACKWISE_MESSAGE\" \"$STACKWISE_LOG_TAIL\" \"$STACKWISE_PROMPT_FILE\" \"$STACKWISE_CONTEXT_FILE\" \"$STACKWISE_SCRIPT_FILE\" \"$STACKWISE_LOG_FILE\" > \"$STACKWISE_STATUS_FILE\"\nprintf '\\nAgent exited with %s.\\n' \"$STACKWISE_EXIT_CODE\"\nif [ -t 0 ]; then printf 'Press Enter to close this Stackwise agent shell...'; read _; fi\n",
             shell_quote(&cwd.to_string_lossy()),
             shell_quote(handoff_id),
             shell_quote(agent.label()),
@@ -2042,9 +2045,11 @@ mod tests {
         sanitize_file_component, ui_asset_path, write_agent_script, AgentHandoffPaths,
         AgentHandoffRequest, AgentHandoffState, AgentHandoffStatus, AgentKind, AgentScriptConfig,
     };
+    #[cfg(unix)]
+    use super::read_agent_status;
     use std::fs;
     use std::path::{Path, PathBuf};
-    #[cfg(windows)]
+    #[cfg(any(unix, windows))]
     use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -2385,6 +2390,67 @@ mod tests {
         assert!(runner_script.contains("call opencode run"));
         assert!(runner_script.contains("--file \"%STACKWISE_PROMPT_FILE%\""));
         assert!(runner_script.contains(opencode_prompt_message()));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_agent_script_records_multiline_log_tail_as_valid_json() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = unique_temp_dir();
+        let bin = root.join("bin");
+        let script_path = root.join("launch.sh");
+        let prompt_path = root.join("brief.prompt.md");
+        let context_path = root.join("brief.context.json");
+        let status_path = root.join("brief.status.json");
+        let log_path = root.join("brief.log");
+
+        fs::create_dir_all(&bin).expect("test bin is created");
+        let fake_agent = bin.join("cursor-agent");
+        fs::write(
+            &fake_agent,
+            "#!/bin/sh\necho 'fake cursor failure'\nprintf '%s\\n' 'line \"two\" with \\backslash'\nexit 7\n",
+        )
+        .expect("fake agent is written");
+        let mut permissions = fs::metadata(&fake_agent)
+            .expect("fake agent metadata is readable")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_agent, permissions).expect("fake agent is executable");
+        fs::write(&prompt_path, "optimize this").expect("prompt is written");
+
+        write_agent_script(AgentScriptConfig {
+            script_path: &script_path,
+            agent: AgentKind::Cursor,
+            handoff_id: "123-cursor-demo",
+            prompt_path: &prompt_path,
+            context_path: &context_path,
+            status_path: &status_path,
+            log_path: &log_path,
+            workspace_root: Some(&root),
+        })
+        .expect("script should be written");
+
+        let path = format!(
+            "{}:{}",
+            bin.to_string_lossy(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let output = Command::new("sh")
+            .arg(&script_path)
+            .env("PATH", path)
+            .output()
+            .expect("handoff script should run");
+
+        assert!(output.status.success());
+        let status = read_agent_status(&status_path).expect("status should be valid JSON");
+        assert_eq!(status.state, AgentHandoffState::Failed);
+        assert_eq!(status.exit_code, Some(7));
+        let log_tail = status.log_tail.as_deref().unwrap_or_default();
+        assert!(log_tail.contains("fake cursor failure"));
+        assert!(log_tail.contains("line \"two\" with \\backslash"));
 
         let _ = fs::remove_dir_all(root);
     }
